@@ -116,9 +116,9 @@ ROLE=demo-compute-ssm-role
 PROFILE=demo-compute-ssm-profile
 NAME=demo-compute-ec2
 
-cmd=${1:-up}
+cmd=${1:-deploy}
 
-up() {
+deploy() {
   AMI=$(aws ssm get-parameter --region "$REGION" \
     --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
     --query Parameter.Value --output text)
@@ -146,7 +146,7 @@ up() {
   echo "  aws ssm start-session --region $REGION --target $IID"
 }
 
-down() {
+cleanup() {
   IID=$(aws ec2 describe-instances --region "$REGION" \
     --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=running,pending,stopped" \
     --query 'Reservations[].Instances[].InstanceId' --output text)
@@ -159,9 +159,9 @@ down() {
 }
 
 case "$cmd" in
-  up) up ;;
-  down) down ;;
-  *) echo "usage: $0 up|down" ;;
+  deploy)  deploy ;;
+  cleanup) cleanup ;;
+  *) echo "usage: $0 deploy|cleanup" >&2; exit 2 ;;
 esac
 ```
 
@@ -270,3 +270,98 @@ python3 deploy.py invoke
 ```bash
 python3 deploy.py cleanup
 ```
+
+---
+
+## Demo 3: EC2 UserData bootstrap (`userdata.sh`)
+
+### 1. Overview
+- **What it shows:** An EC2 instance that bootstraps itself on first boot via cloud-init UserData — installs nginx, queries IMDSv2, renders a status page. No SSH, no AMI baking, no manual config.
+- **Use case:** Reproducible "golden image without a golden image" — codify the bootstrap, throw the AMI away, scale horizontally.
+- **Services:** EC2, IMDSv2.
+
+### 2. How UserData runs
+- The script in `--user-data` is delivered to the instance as base64 via the metadata service.
+- `cloud-init` executes it **once, as root, on the very first boot** (before the login prompt is even available).
+- All output is captured in `/var/log/cloud-init-output.log` — the canonical place to debug bootstrap failures.
+- A shebang of `#!/bin/bash` runs as a shell script. Other formats (`#cloud-config`, MIME multipart) are also supported.
+
+### 3. Prerequisites
+- Default VPC (or set `SUBNET_ID`).
+- The script opens **port 80 from `0.0.0.0/0`** for the demo — fine for a throwaway test, never do this in production.
+
+### 4–5. Run
+```bash
+./userdata.sh deploy     # launches instance, prints public IP + curl command
+# wait ~60–90s for cloud-init to finish, then:
+curl http://<public-ip>/
+```
+
+The page returned is generated *by the instance, on the instance, on first boot* — proving UserData ran and the instance can introspect itself via IMDSv2.
+
+### 6. Validation — peek at the bootstrap log
+```bash
+aws ssm start-session --region us-east-1 --target <iid>
+sudo tail -n 50 /var/log/cloud-init-output.log
+sudo cat /var/lib/cloud/instance/user-data.txt   # the script you sent
+```
+
+### 7. Cleanup
+```bash
+./userdata.sh cleanup
+```
+
+---
+
+## Reference: Instance type comparison (`instance-types.html`)
+
+A self-contained, offline HTML page that compares ~30 representative EC2 instance types
+across families (Burstable, General, Compute, Memory, Storage, Accelerated) with:
+
+- vCPU / RAM / network / local storage
+- Architecture (x86_64 vs Graviton arm64)
+- On-demand `$/hr` and `$/mo` (us-east-1, Linux)
+- Typical workload for each
+- Filterable by family, searchable, sortable by any column
+- Decision-making notes (family letters, generation, suffixes, burstable caveats, Spot/SP)
+
+Open it locally:
+
+```bash
+xdg-open instance-types.html        # Linux
+open instance-types.html            # macOS
+start instance-types.html           # Windows
+```
+
+> Pricing is a **snapshot** for teaching — always confirm in the AWS Pricing Calculator
+> before sizing real workloads.
+
+---
+
+## Reference: AMI choice — Amazon Linux 2023
+
+All Module 4 demos launch **Amazon Linux 2023 (AL2023)** by resolving the SSM Public Parameter
+`/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64` at deploy time. This
+guarantees you always get the latest patched build without hard-coding AMI IDs (which are
+region-specific and rotate frequently).
+
+### What AL2023 is optimized for
+- **Long-term support** — 5-year support window on a Fedora-derived base.
+- **Fast boot, minimal package set, SELinux enforcing** — small attack surface vs. full distros.
+- **Pre-installed agents** — `amazon-ssm-agent`, `cloud-init`, `awscli-2`, `nvme-cli`.
+- **Deterministic kernel** — `kernel-default` channel, vs. AL2's older `kernel-5.10`.
+- **Tuned for AWS** — ENA, NVMe, Nitro, IMDSv2 defaults all preconfigured.
+
+### Best use cases
+- General Linux workloads on EC2, ECS-on-EC2, EKS worker nodes.
+- Containers, web/API tiers, batch jobs, ML inference VMs.
+- Anywhere you previously used Amazon Linux 2 and want LTS without re-platforming.
+- SSM-managed fleets (agent already running — no SSH key needed).
+
+### When to pick something else
+| Choose | Reason |
+|---|---|
+| **Ubuntu** | Broader package ecosystem, NVIDIA drivers, ML/data tooling |
+| **Bottlerocket** | Purpose-built minimal container host with atomic updates |
+| **RHEL / SLES** | You need vendor support contracts |
+| **Windows Server** | .NET Framework, Active Directory, MSSQL Server |

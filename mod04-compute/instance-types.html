@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>EC2 Instance Type Comparison — Module 4</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --line:#30363d; --ink:#e6edf3;
+    --mute:#8b949e; --accent:#58a6ff; --good:#3fb950; --warn:#d29922;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,system-ui,sans-serif;
+       background:var(--bg);color:var(--ink)}
+  header{padding:2rem 1.5rem 1rem;max-width:1200px;margin:0 auto}
+  h1{margin:0 0 .25rem;font-size:1.7rem}
+  h2{margin:2rem 0 .75rem;font-size:1.2rem;color:var(--accent)}
+  p.lede{color:var(--mute);margin:.25rem 0 0}
+  main{max-width:1200px;margin:0 auto;padding:0 1.5rem 4rem}
+  .controls{display:flex;flex-wrap:wrap;gap:.5rem;margin:1rem 0}
+  .controls button{background:var(--panel);color:var(--ink);border:1px solid var(--line);
+                   padding:.45rem .9rem;border-radius:6px;cursor:pointer;font-size:13px}
+  .controls button.active{background:var(--accent);border-color:var(--accent);color:#0d1117;font-weight:600}
+  .controls input{background:var(--panel);color:var(--ink);border:1px solid var(--line);
+                  padding:.45rem .7rem;border-radius:6px;font-size:13px;flex:1;min-width:180px}
+  table{width:100%;border-collapse:collapse;background:var(--panel);
+        border:1px solid var(--line);border-radius:8px;overflow:hidden;font-size:13.5px}
+  th,td{padding:.65rem .8rem;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+  th{background:#1f2630;font-weight:600;cursor:pointer;user-select:none;position:sticky;top:0;z-index:1}
+  th:hover{color:var(--accent)}
+  tr:last-child td{border-bottom:none}
+  tr:hover td{background:#1c2230}
+  td.num{text-align:right;font-variant-numeric:tabular-nums}
+  .pill{display:inline-block;padding:.1rem .55rem;border-radius:99px;font-size:11.5px;font-weight:600}
+  .fam-general{background:#1f3a5f;color:#79c0ff}
+  .fam-compute{background:#3a1f5f;color:#d2a8ff}
+  .fam-memory{background:#5f1f2e;color:#ff7b72}
+  .fam-storage{background:#5f4a1f;color:#e3b341}
+  .fam-accelerated{background:#1f5f3a;color:#7ee787}
+  .fam-burstable{background:#374151;color:#a1a1aa}
+  .arch-arm{color:var(--good);font-weight:600}
+  .arch-x86{color:var(--accent);font-weight:600}
+  .note{color:var(--mute);font-size:12px}
+  details{background:var(--panel);border:1px solid var(--line);border-radius:8px;
+          padding:.75rem 1rem;margin:.6rem 0}
+  details[open] summary{margin-bottom:.5rem;color:var(--accent)}
+  summary{cursor:pointer;font-weight:600}
+  code{background:#1f2630;padding:.1rem .35rem;border-radius:4px;font-size:12.5px}
+  .legend{display:flex;flex-wrap:wrap;gap:.5rem;margin:.75rem 0 1.25rem}
+  .ami{display:grid;grid-template-columns:1fr 1fr 1fr;gap:1rem;margin-top:.5rem}
+  @media (max-width:900px){.ami{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:1rem}
+  .card h3{margin:0 0 .4rem;color:var(--accent);font-size:1rem}
+  .card ul{margin:.4rem 0 0 1rem;padding:0;color:var(--mute);font-size:13px}
+  .card li{margin:.15rem 0}
+  .ts{font-size:11.5px;color:var(--mute)}
+  .stamp{margin-top:.5rem;font-size:12px;color:var(--warn)}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>EC2 Instance Type Comparison</h1>
+  <p class="lede">A representative cross-section of EC2 families. Pick the right instance
+  by matching its <em>family</em> (vCPU:RAM ratio, accelerators, network) to your workload —
+  not by raw price.</p>
+</header>
+
+<main>
+
+<h2>Default AMI for these demos — Amazon Linux 2023</h2>
+<p class="lede">
+  All Module 4 scripts launch <code>al2023-ami-kernel-default-x86_64</code>, fetched via
+  the SSM Public Parameter
+  <code>/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64</code>
+  so you always get the latest patched build.
+</p>
+<div class="ami">
+  <div class="card">
+    <h3>Optimized for</h3>
+    <ul>
+      <li>Long-term support (5 yrs) on a Fedora-derived base</li>
+      <li>Fast boot, minimal package set, SELinux enforcing</li>
+      <li>Pre-installed <code>amazon-ssm-agent</code>, <code>cloud-init</code>, <code>awscli-2</code></li>
+      <li>Deterministic kernels via <em>kernel-default</em> (vs. older AL2 kernel-5.10)</li>
+      <li>Lower attack surface than full distros (no GUI, no Java by default)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>Best use cases</h3>
+    <ul>
+      <li>General Linux workloads on EC2 / ECS-on-EC2 / EKS nodes</li>
+      <li>Containers, web/API tiers, batch jobs, ML inference VMs</li>
+      <li>Anywhere you previously used Amazon Linux 2 and want LTS</li>
+      <li>SSM-managed fleets (agent already running, no SSH needed)</li>
+    </ul>
+  </div>
+  <div class="card">
+    <h3>When to pick something else</h3>
+    <ul>
+      <li><strong>Ubuntu</strong> — broader package ecosystem, GPU/ML tooling</li>
+      <li><strong>Bottlerocket</strong> — purpose-built minimal container host</li>
+      <li><strong>RHEL / SLES</strong> — vendor support contracts required</li>
+      <li><strong>Windows Server</strong> — .NET Framework, AD, MSSQL</li>
+    </ul>
+  </div>
+</div>
+
+<h2>Instance type catalogue</h2>
+<p class="note">Filter by family or search by name. Click any column to sort.
+Prices are <strong>on-demand, Linux, us-east-1, hourly</strong> — indicative only;
+always verify in the AWS Pricing Calculator before sizing.</p>
+
+<div class="controls">
+  <button data-fam="all" class="active">All</button>
+  <button data-fam="burstable">Burstable (T)</button>
+  <button data-fam="general">General (M)</button>
+  <button data-fam="compute">Compute (C)</button>
+  <button data-fam="memory">Memory (R / X)</button>
+  <button data-fam="storage">Storage (I / D)</button>
+  <button data-fam="accelerated">Accelerated (G / P / Inf / Trn)</button>
+  <input id="q" placeholder="Search type, e.g. m7g.large or graviton">
+</div>
+
+<table id="t">
+<thead>
+<tr>
+  <th data-k="type">Type</th>
+  <th data-k="famLabel">Family</th>
+  <th data-k="arch">Arch</th>
+  <th data-k="vcpu" class="num">vCPU</th>
+  <th data-k="ram"  class="num">RAM (GiB)</th>
+  <th data-k="net">Network</th>
+  <th data-k="storage">Local Storage</th>
+  <th data-k="price" class="num">$/hr</th>
+  <th data-k="monthly" class="num">$/mo<span class="note"> (730h)</span></th>
+  <th data-k="use">Typical workload</th>
+</tr>
+</thead>
+<tbody></tbody>
+</table>
+<p class="stamp">Pricing snapshot: us-east-1, Linux, on-demand. Verify before quoting.</p>
+
+<h2>How to choose — a 30-second mental model</h2>
+<details open>
+  <summary>1. Start with the family letter</summary>
+  <p><strong>T</strong> burstable · <strong>M</strong> balanced · <strong>C</strong> CPU-heavy ·
+  <strong>R/X</strong> RAM-heavy · <strong>I/D</strong> local NVMe ·
+  <strong>G/P</strong> GPU · <strong>Inf/Trn</strong> AWS ML silicon.</p>
+</details>
+<details>
+  <summary>2. Then the generation number</summary>
+  <p>Higher = newer silicon = better $/perf. A <code>m7i</code> beats <code>m5</code>
+  on almost every metric at similar list price. Skip generations only when you need
+  a feature (e.g. NVMe local on <code>i4i</code>).</p>
+</details>
+<details>
+  <summary>3. Then the suffix</summary>
+  <p><code>g</code> = AWS Graviton (Arm, ~20% cheaper, ~40% better perf/$ — but rebuild your AMI).
+  <code>i</code> = Intel · <code>a</code> = AMD ·
+  <code>n</code> = network-optimized · <code>d</code> = NVMe local SSD ·
+  <code>z</code> = high-frequency.</p>
+</details>
+<details>
+  <summary>4. Burstable (T) caveat</summary>
+  <p>T-family CPUs run at a baseline (e.g. 20% on <code>t3.micro</code>) and earn credits when idle.
+  Sustained 100% CPU exhausts credits and either throttles you or charges <em>unlimited mode</em>
+  surcharges. Never use T for steady production workloads.</p>
+</details>
+<details>
+  <summary>5. Spot vs. On-Demand vs. Savings Plans</summary>
+  <p>Spot ≈ 70–90% off but interruptible (2-min warning) — great for stateless / batch.
+  Savings Plans / Reserved ≈ 40–60% off for 1- or 3-yr commits — great for steady fleet baseline.
+  On-Demand for bursty / unpredictable.</p>
+</details>
+
+</main>
+
+<script>
+const data = [
+  // type, family, famLabel, arch, vcpu, ram, net, storage, price, use
+  ["t3.nano",      "burstable","Burstable","x86_64",2,0.5,"Up to 5 Gbps","EBS only",0.0052,"Tiny dev/test, cron, demo VMs"],
+  ["t3.micro",     "burstable","Burstable","x86_64",2,1,"Up to 5 Gbps","EBS only",0.0104,"Free-tier eligible; light web"],
+  ["t3.small",     "burstable","Burstable","x86_64",2,2,"Up to 5 Gbps","EBS only",0.0208,"Low-traffic web, bastions"],
+  ["t3.medium",    "burstable","Burstable","x86_64",2,4,"Up to 5 Gbps","EBS only",0.0416,"Small APIs, build agents"],
+  ["t4g.small",    "burstable","Burstable","arm64", 2,2,"Up to 5 Gbps","EBS only",0.0168,"Graviton burstable, 20% cheaper than t3"],
+  ["t4g.medium",   "burstable","Burstable","arm64", 2,4,"Up to 5 Gbps","EBS only",0.0336,"Graviton burstable for containers"],
+
+  ["m7i.large",    "general","General",  "x86_64",2,8,  "Up to 12.5 Gbps","EBS only",0.1008,"Steady web/API, app servers"],
+  ["m7i.xlarge",   "general","General",  "x86_64",4,16, "Up to 12.5 Gbps","EBS only",0.2016,"Mid-size web tier, microservices"],
+  ["m7i.2xlarge",  "general","General",  "x86_64",8,32, "Up to 12.5 Gbps","EBS only",0.4032,"Java/Node app servers under load"],
+  ["m7g.large",    "general","General",  "arm64", 2,8,  "Up to 12.5 Gbps","EBS only",0.0816,"Graviton general — best $/perf"],
+  ["m7g.xlarge",   "general","General",  "arm64", 4,16, "Up to 12.5 Gbps","EBS only",0.1632,"EKS/ECS Graviton workers"],
+  ["m7a.large",    "general","General",  "x86_64",2,8,  "Up to 12.5 Gbps","EBS only",0.1158,"AMD EPYC general purpose"],
+
+  ["c7i.large",    "compute","Compute",  "x86_64",2,4,  "Up to 12.5 Gbps","EBS only",0.0850,"Web frontends, ad servers, encoding"],
+  ["c7i.xlarge",   "compute","Compute",  "x86_64",4,8,  "Up to 12.5 Gbps","EBS only",0.1700,"CPU-bound APIs, gaming, sims"],
+  ["c7i.2xlarge",  "compute","Compute",  "x86_64",8,16, "Up to 12.5 Gbps","EBS only",0.3400,"Batch compute, video transcoding"],
+  ["c7g.large",    "compute","Compute",  "arm64", 2,4,  "Up to 12.5 Gbps","EBS only",0.0725,"Graviton compute — top perf/$"],
+  ["c7g.xlarge",   "compute","Compute",  "arm64", 4,8,  "Up to 12.5 Gbps","EBS only",0.1450,"Containerized CPU-bound services"],
+  ["c7gn.xlarge",  "compute","Compute",  "arm64", 4,8,  "Up to 50 Gbps",  "EBS only",0.2400,"Network-heavy: NFV, load balancers"],
+
+  ["r7i.large",    "memory","Memory",    "x86_64",2,16, "Up to 12.5 Gbps","EBS only",0.1323,"Caches (Redis), small DBs"],
+  ["r7i.xlarge",   "memory","Memory",    "x86_64",4,32, "Up to 12.5 Gbps","EBS only",0.2646,"In-memory analytics, mid DBs"],
+  ["r7i.2xlarge",  "memory","Memory",    "x86_64",8,64, "Up to 12.5 Gbps","EBS only",0.5292,"PostgreSQL, Elasticsearch nodes"],
+  ["r7g.large",    "memory","Memory",    "arm64", 2,16, "Up to 12.5 Gbps","EBS only",0.1071,"Graviton Redis/Memcached"],
+  ["r7g.2xlarge",  "memory","Memory",    "arm64", 8,64, "Up to 12.5 Gbps","EBS only",0.4284,"Graviton OpenSearch / DBs"],
+  ["x2iedn.xlarge","memory","Memory",    "x86_64",4,128,"Up to 25 Gbps",  "118 GB NVMe",0.8336,"SAP HANA, large in-memory DBs"],
+
+  ["i4i.large",    "storage","Storage",  "x86_64",2,16, "Up to 10 Gbps",  "468 GB NVMe",0.1720,"Transactional DBs (MySQL, PG)"],
+  ["i4i.xlarge",   "storage","Storage",  "x86_64",4,32, "Up to 10 Gbps",  "937 GB NVMe",0.3430,"NoSQL (Cassandra, Mongo)"],
+  ["i4g.large",    "storage","Storage",  "arm64", 2,16, "Up to 10 Gbps",  "468 GB NVMe",0.1543,"Graviton storage-optimized"],
+  ["d3.xlarge",    "storage","Storage",  "x86_64",4,32, "Up to 15 Gbps",  "5.94 TB HDD",0.4990,"Hadoop/HDFS, log warehouses"],
+
+  ["g5.xlarge",    "accelerated","Accelerated","x86_64",4,16,"Up to 10 Gbps","250 GB NVMe",1.006,"1× A10G — graphics, small ML inference"],
+  ["g6.2xlarge",   "accelerated","Accelerated","x86_64",8,32,"Up to 10 Gbps","450 GB NVMe",1.0,  "1× L4 — modern inference, video AI"],
+  ["p5.48xlarge",  "accelerated","Accelerated","x86_64",192,2048,"3200 Gbps","30 TB NVMe",98.32,"8× H100 — frontier-model training"],
+  ["inf2.xlarge",  "accelerated","Accelerated","x86_64",4,16,"Up to 15 Gbps","EBS only",0.7582,"AWS Inferentia2 — cheap LLM inference"],
+  ["trn1.2xlarge", "accelerated","Accelerated","x86_64",8,32,"Up to 12.5 Gbps","475 GB NVMe",1.3438,"AWS Trainium — cost-efficient training"],
+];
+
+const rows = data.map(r => ({
+  type:r[0], family:r[1], famLabel:r[2], arch:r[3],
+  vcpu:r[4], ram:r[5], net:r[6], storage:r[7],
+  price:r[8], monthly:+(r[8]*730).toFixed(2), use:r[9]
+}));
+
+let filterFam="all", q="", sortKey="price", sortDir=1;
+
+const tbody = document.querySelector("#t tbody");
+function render(){
+  const f = rows
+    .filter(r => filterFam==="all" || r.family===filterFam)
+    .filter(r => !q || (r.type+" "+r.use+" "+r.arch+" "+r.famLabel).toLowerCase().includes(q))
+    .sort((a,b)=>{
+      const va=a[sortKey], vb=b[sortKey];
+      if(typeof va==="number") return (va-vb)*sortDir;
+      return String(va).localeCompare(String(vb))*sortDir;
+    });
+  tbody.innerHTML = f.map(r=>`
+    <tr>
+      <td><code>${r.type}</code></td>
+      <td><span class="pill fam-${r.family}">${r.famLabel}</span></td>
+      <td class="${r.arch==='arm64'?'arch-arm':'arch-x86'}">${r.arch==='arm64'?'Graviton (arm64)':'x86_64'}</td>
+      <td class="num">${r.vcpu}</td>
+      <td class="num">${r.ram}</td>
+      <td>${r.net}</td>
+      <td>${r.storage}</td>
+      <td class="num">$${r.price.toFixed(4)}</td>
+      <td class="num">$${r.monthly.toFixed(2)}</td>
+      <td>${r.use}</td>
+    </tr>`).join("");
+}
+
+document.querySelectorAll(".controls button").forEach(b=>{
+  b.onclick = () => {
+    document.querySelectorAll(".controls button").forEach(x=>x.classList.remove("active"));
+    b.classList.add("active");
+    filterFam = b.dataset.fam;
+    render();
+  };
+});
+document.getElementById("q").oninput = e => { q = e.target.value.toLowerCase(); render(); };
+document.querySelectorAll("th").forEach(th=>{
+  th.onclick = () => {
+    const k = th.dataset.k;
+    if(sortKey===k) sortDir*=-1; else { sortKey=k; sortDir=1; }
+    render();
+  };
+});
+render();
+</script>
+</body>
+</html>
