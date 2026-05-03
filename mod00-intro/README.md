@@ -29,7 +29,7 @@
 
 ### 4. Step-by-Step
 1. Run `python3 demo.py discover` — prints account inventory.
-2. Run `python3 demo.py create-workload` — creates a WA Tool workload.
+2. Run `python3 demo.py deploy` — creates a WA Tool workload.
 3. Open the AWS console → Well-Architected Tool → see the workload.
 4. Run `python3 demo.py cleanup`.
 
@@ -93,7 +93,7 @@ def cleanup():
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "discover"
-    {"discover": discover, "create-workload": create_workload, "cleanup": cleanup}[cmd]()
+    {"discover": discover, "deploy": deploy, "cleanup": cleanup}[cmd]()
 ```
 
 ### 6. Validation

@@ -11,7 +11,7 @@ def _bucket():
     acct = sts.get_caller_identity()["Account"]
     return f"demo-storage-archive-{acct}-{REGION}"
 
-def up():
+def deploy():
     b = _bucket()
     try:
         if REGION == "us-east-1":
@@ -50,7 +50,7 @@ def inspect():
     print("Lifecycle:")
     print(json.dumps(s3.get_bucket_lifecycle_configuration(Bucket=b)["Rules"], indent=2, default=str))
 
-def down():
+def cleanup():
     b = _bucket()
     paginator = s3.get_paginator("list_object_versions")
     for page in paginator.paginate(Bucket=b):
@@ -62,4 +62,4 @@ def down():
     except ClientError as e: print(e)
 
 if __name__ == "__main__":
-    {"up": up, "upload": upload, "inspect": inspect, "down": down}[sys.argv[1]]()
+    {"deploy": deploy, "upload": upload, "inspect": inspect, "cleanup": cleanup}[sys.argv[1]]()

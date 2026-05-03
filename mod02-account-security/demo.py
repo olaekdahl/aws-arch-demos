@@ -29,7 +29,7 @@ DOC = {
 
 iam = boto3.client("iam")
 
-def create():
+def deploy():
     try:
         role = iam.create_role(RoleName=ROLE, AssumeRolePolicyDocument=json.dumps(TRUST))
         print("Role:", role["Role"]["Arn"])
@@ -73,4 +73,4 @@ def cleanup():
     print("Cleanup done.")
 
 if __name__ == "__main__":
-    {"create": create, "simulate": simulate, "cleanup": cleanup}[sys.argv[1]]()
+    {"deploy": deploy, "simulate": simulate, "cleanup": cleanup}[sys.argv[1]]()

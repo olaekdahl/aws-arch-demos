@@ -12,21 +12,99 @@
 - **Use case:** Modern keyless EC2 access.
 - **Services:** EC2, IAM, SSM.
 
+### Concepts (read this first)
+
+**Why SSM Session Manager replaces SSH**
+
+Traditional SSH access to EC2 requires:
+- A key pair (`.pem` file) you have to distribute and rotate.
+- An inbound rule allowing port 22 from somewhere — bastion, VPN, or worst-case `0.0.0.0/0`.
+- A public IP or jump host.
+
+Each of those is a long-running source of operational pain and security incidents
+(leaked keys, scanned-open ports, lost bastions). Session Manager removes all of them.
+
+**How Session Manager actually works**
+
+```
+[ Your laptop ]                                     [ EC2 instance ]
+      |                                                    ^
+      | 1. aws ssm start-session                           | 4. ssm-agent runs the
+      |    (TLS over 443 to SSM API)                       |    received commands and
+      v                                                    |    streams stdout back
+[ SSM Service ] <------- 2. agent polls SSM ---------------+
+                          (HTTPS outbound only:
+                           ssm, ssmmessages, ec2messages)
+                          3. session payload pushed
+                             through long-poll channel
+```
+
+Key points:
+- **All traffic is outbound from the instance** to AWS endpoints. No inbound listener.
+- **No SSH daemon, no port 22, no keys.** The SSM agent (preinstalled on Amazon Linux,
+  Ubuntu 18.04+, etc.) authenticates with its IAM role.
+- The "shell" you get is run by the agent as the `ssm-user` user (sudoer by default).
+- Sessions are auditable — every command + output can be logged to S3/CloudWatch Logs,
+  and `start-session` calls are recorded in CloudTrail with the IAM principal.
+
+**The SSM-enabled instance profile**
+
+For the agent to register with SSM, the instance must assume a role that grants the
+permissions in the AWS-managed policy **`AmazonSSMManagedInstanceCore`**. That policy
+allows exactly what the agent needs:
+
+| Permission | Purpose |
+|---|---|
+| `ssm:UpdateInstanceInformation` | Heartbeat / register the instance |
+| `ssmmessages:CreateControlChannel`, `OpenControlChannel`, `CreateDataChannel`, `OpenDataChannel` | Long-poll session traffic |
+| `ec2messages:*` | Receive `SendCommand` invocations |
+| `s3:GetObject` (limited paths) | Pull the latest agent / patch baselines |
+
+An **instance profile** is just a thin wrapper that attaches a role to an EC2 instance
+(EC2 cannot directly assume a role — it assumes one through a profile). The script
+creates `demo-compute-ssm-role`, attaches `AmazonSSMManagedInstanceCore`, wraps it in
+`demo-compute-ssm-profile`, then launches the instance with `--iam-instance-profile`.
+
+**No inbound rules required**
+
+The launched instance has no security group ingress rules — the demo doesn't even create
+one explicitly, so the instance gets the VPC default SG (no ingress from anywhere).
+Outbound 443 is enough because Session Manager piggybacks on the agent's existing poll.
+For instances in fully **private subnets** (no NAT, no IGW), reach SSM via three
+**Interface VPC Endpoints**: `ssm`, `ssmmessages`, `ec2messages` (see Module 10).
+
 ### 2. Architecture
 ```
 [ Your laptop ]
-      | (StartSession over HTTPS)
+      | (StartSession over HTTPS — TLS 443)
       v
-[ SSM Service ] <------- ssmmessages, ec2messages
+[ SSM Service ] <------- ssmmessages, ec2messages (outbound 443 from instance)
       |
       v
-[ EC2 t3.micro ]  (no SSH, no inbound rules)
-   role: demo-compute-ssm-role
+[ EC2 t3.micro ]  (no SSH key, no port 22, no inbound rules)
+   IAM role: demo-compute-ssm-role
+   policy:   AmazonSSMManagedInstanceCore
 ```
 
 ### 3. Prerequisites
-- AWS CLI v2 + Session Manager plugin installed.
+- AWS CLI v2.
+- **Session Manager plugin** for the AWS CLI (one-time install — see below).
 - Default VPC present (or set `SUBNET_ID` env var).
+
+#### Install the Session Manager plugin
+
+| OS | Command |
+|---|---|
+| **Ubuntu / Debian (x86_64)** | `curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_64bit/session-manager-plugin.deb" -o /tmp/smp.deb && sudo dpkg -i /tmp/smp.deb` |
+| **Ubuntu / Debian (arm64)** | `curl -fsSL "https://s3.amazonaws.com/session-manager-downloads/plugin/latest/ubuntu_arm64/session-manager-plugin.deb" -o /tmp/smp.deb && sudo dpkg -i /tmp/smp.deb` |
+| **Amazon Linux / RHEL (x86_64)** | `sudo dnf install -y https://s3.amazonaws.com/session-manager-downloads/plugin/latest/linux_64bit/session-manager-plugin.rpm` |
+| **macOS** | `brew install --cask session-manager-plugin` |
+| **Windows** | Download the MSI: <https://s3.amazonaws.com/session-manager-downloads/plugin/latest/windows/SessionManagerPluginSetup.exe> |
+
+Verify:
+```bash
+session-manager-plugin --version
+```
 
 ### 4–5. Code — `demo.sh` (single file)
 ```bash
@@ -95,7 +173,7 @@ aws ssm start-session --region us-east-1 --target <iid>
 
 ### 7. Cleanup
 ```bash
-./demo.sh down
+./demo.sh cleanup
 ```
 
 ---

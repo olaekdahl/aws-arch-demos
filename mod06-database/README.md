@@ -32,10 +32,10 @@ Access patterns:
 
 ### 4. Step-by-Step
 ```bash
-python3 demo.py up
+python3 demo.py deploy
 python3 demo.py seed
 python3 demo.py query
-python3 demo.py down
+python3 demo.py cleanup
 ```
 
 ### 5. Code — `demo.py`
@@ -113,7 +113,7 @@ if __name__ == "__main__":
 
 ### 7. Cleanup
 ```bash
-python3 demo.py down
+python3 demo.py cleanup
 ```
 
 ---

@@ -6,7 +6,7 @@
 #   2. dig aws.amazon.com                     -> DNS
 #   3. ping a public DNS (will fail, ICMP rejected) but still logs flow
 #
-# Cleanup: pass `down` to terminate the instance.
+# Cleanup: pass `cleanup` to terminate the instance.
 set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
 STACK=demo-net-vpc
@@ -14,14 +14,14 @@ NAME=demo-net-traffic-gen
 ROLE=demo-net-traffic-gen-role
 PROFILE=demo-net-traffic-gen-profile
 
-cmd="${1:-up}"
+cmd="${1:-deploy}"
 
 vpc_outputs() {
   aws cloudformation describe-stacks --region "$REGION" --stack-name "$STACK" \
     --query 'Stacks[0].Outputs' --output json
 }
 
-up() {
+deploy() {
   OUT=$(vpc_outputs)
   VPC=$(echo "$OUT" | python3 -c "import sys,json; o=json.load(sys.stdin); print([x['OutputValue'] for x in o if x['OutputKey']=='VpcId'][0])")
   SUBNET=$(echo "$OUT" | python3 -c "import sys,json; o=json.load(sys.stdin); print([x['OutputValue'] for x in o if x['OutputKey']=='PrivateA'][0])")
@@ -78,10 +78,10 @@ up() {
   echo "Tail with:"
   echo "  aws logs tail /demo/vpc/flowlogs --region $REGION --since 5m --follow"
   echo
-  echo "When done, run: $0 down"
+  echo "When done, run: $0 cleanup"
 }
 
-down() {
+cleanup() {
   IID=$(aws ec2 describe-instances --region "$REGION" \
     --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=running,pending,stopped" \
     --query 'Reservations[].Instances[].InstanceId' --output text)
@@ -102,7 +102,7 @@ down() {
 }
 
 case "$cmd" in
-  up)   up ;;
-  down) down ;;
-  *) echo "usage: $0 up|down" >&2; exit 2 ;;
+  deploy)  deploy ;;
+  cleanup) cleanup ;;
+  *) echo "usage: $0 deploy|cleanup" >&2; exit 2 ;;
 esac

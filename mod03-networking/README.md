@@ -211,8 +211,8 @@ To distinguish *your* traffic from internet noise, launch a small EC2 in the pri
 and run egress workloads via SSM:
 
 ```bash
-./traffic-gen.sh up      # launches t3.micro + curl/dig/ping via SSM
-./traffic-gen.sh down    # cleanup
+./traffic-gen.sh deploy   # launches t3.micro + curl/dig/ping via SSM
+./traffic-gen.sh cleanup  # remove instance + role
 ```
 
 ### 7. Cleanup

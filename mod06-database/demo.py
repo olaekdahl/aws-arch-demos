@@ -8,7 +8,7 @@ TABLE  = "demo-db-orders"
 ddb  = boto3.client("dynamodb", region_name=REGION)
 res  = boto3.resource("dynamodb", region_name=REGION)
 
-def up():
+def deploy():
     try:
         ddb.create_table(
             TableName=TABLE,
@@ -58,9 +58,9 @@ def query():
         KeyConditionExpression=boto3.dynamodb.conditions.Key("GSI1PK").eq("STATUS#NEW"))
     for i in r["Items"]: print(" ", i)
 
-def down():
+def cleanup():
     try: ddb.delete_table(TableName=TABLE); print("Deleting…")
     except ClientError as e: print(e)
 
 if __name__ == "__main__":
-    {"up": up, "seed": seed, "query": query, "down": down}[sys.argv[1]]()
+    {"deploy": deploy, "seed": seed, "query": query, "cleanup": cleanup}[sys.argv[1]]()

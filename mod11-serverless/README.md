@@ -224,7 +224,7 @@ if __name__ == "__main__":
 
 ### 6. Validation
 ```bash
-python3 demo.py up
+python3 demo.py deploy
 python3 demo.py publish
 python3 demo.py receive
 # Expect: demo-srv-orders: 1 msg(s), demo-srv-alerts: 1 msg(s)
@@ -232,5 +232,5 @@ python3 demo.py receive
 
 ### 7. Cleanup
 ```bash
-python3 demo.py down
+python3 demo.py cleanup
 ```

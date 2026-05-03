@@ -13,7 +13,7 @@ eb  = boto3.client("events", region_name=REGION)
 sqs = boto3.client("sqs",    region_name=REGION)
 sts = boto3.client("sts")
 
-def up():
+def deploy():
     acct = sts.get_caller_identity()["Account"]
     try: eb.create_event_bus(Name=BUS)
     except ClientError as e:
@@ -52,7 +52,7 @@ def receive():
             print("  ", m["Body"][:120])
             sqs.delete_message(QueueUrl=url, ReceiptHandle=m["ReceiptHandle"])
 
-def down():
+def cleanup():
     for qn in QUEUES:
         rule = f"{qn}-rule"
         try:
@@ -66,4 +66,4 @@ def down():
     print("Cleanup done.")
 
 if __name__ == "__main__":
-    {"up":up,"publish":publish,"receive":receive,"down":down}[sys.argv[1]]()
+    {"deploy":deploy,"publish":publish,"receive":receive,"cleanup":cleanup}[sys.argv[1]]()

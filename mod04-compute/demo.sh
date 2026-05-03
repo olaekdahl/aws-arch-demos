@@ -6,9 +6,9 @@ ROLE=demo-compute-ssm-role
 PROFILE=demo-compute-ssm-profile
 NAME=demo-compute-ec2
 
-cmd=${1:-up}
+cmd=${1:-deploy}
 
-up() {
+deploy() {
   AMI=$(aws ssm get-parameter --region "$REGION" \
     --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
     --query Parameter.Value --output text)
@@ -36,7 +36,7 @@ up() {
   echo "  aws ssm start-session --region $REGION --target $IID"
 }
 
-down() {
+cleanup() {
   IID=$(aws ec2 describe-instances --region "$REGION" \
     --filters "Name=tag:Name,Values=$NAME" "Name=instance-state-name,Values=running,pending,stopped" \
     --query 'Reservations[].Instances[].InstanceId' --output text)
@@ -49,7 +49,7 @@ down() {
 }
 
 case "$cmd" in
-  up) up ;;
-  down) down ;;
-  *) echo "usage: $0 up|down" ;;
+  deploy)  deploy ;;
+  cleanup) cleanup ;;
+  *) echo "usage: $0 deploy|cleanup" >&2; exit 2 ;;
 esac

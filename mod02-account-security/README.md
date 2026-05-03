@@ -27,7 +27,7 @@
 
 ### 4. Step-by-Step
 ```bash
-python3 demo.py create
+python3 demo.py deploy
 python3 demo.py simulate
 python3 demo.py cleanup
 ```

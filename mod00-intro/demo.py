@@ -97,9 +97,9 @@ def discover():
         _kv("Spend (7d)", f"unavailable ({e.response['Error']['Code']})")
 
     print()
-    print("\033[1;32mDiscovery complete.\033[0m  Next: python3 demo.py create-workload")
+    print("\033[1;32mDiscovery complete.\033[0m  Next: python3 demo.py deploy")
 
-def create_workload():
+def deploy():
     wa = boto3.client("wellarchitected", region_name=REGION)
     try:
         resp = wa.create_workload(
@@ -129,4 +129,4 @@ def cleanup():
 
 if __name__ == "__main__":
     cmd = sys.argv[1] if len(sys.argv) > 1 else "discover"
-    {"discover": discover, "create-workload": create_workload, "cleanup": cleanup}[cmd]()
+    {"discover": discover, "deploy": deploy, "cleanup": cleanup}[cmd]()
