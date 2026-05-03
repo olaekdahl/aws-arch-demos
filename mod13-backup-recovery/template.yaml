@@ -1,0 +1,68 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Module 13 — AWS Backup plan with tag-based selection
+
+Parameters:
+  LatestAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  Vault:
+    Type: AWS::Backup::BackupVault
+    Properties: { BackupVaultName: demo-bkp-vault }
+
+  BackupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: [{Effect: Allow, Principal: {Service: backup.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+
+  Plan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: demo-bkp-plan
+        BackupPlanRule:
+          - RuleName: daily
+            TargetBackupVault: !Ref Vault
+            ScheduleExpression: cron(0 5 * * ? *)
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 180
+            Lifecycle: { DeleteAfterDays: 7 }
+
+  Selection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref Plan
+      BackupSelection:
+        SelectionName: tag-backup-daily
+        IamRoleArn: !GetAtt BackupRole.Arn
+        ListOfTags:
+          - { ConditionType: STRINGEQUALS, ConditionKey: Backup, ConditionValue: daily }
+
+  # Sample resources tagged for backup
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: demo-bkp-table
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: id, AttributeType: S}]
+      KeySchema: [{AttributeName: id, KeyType: HASH}]
+      Tags: [{ Key: Backup, Value: daily }]
+
+  Ec2:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmi
+      Tags:
+        - { Key: Name, Value: demo-bkp-ec2 }
+        - { Key: Backup, Value: daily }
+
+Outputs:
+  PlanId:    { Value: !Ref Plan }
+  RoleArn:   { Value: !GetAtt BackupRole.Arn }
+  TableArn:  { Value: !GetAtt Table.Arn }

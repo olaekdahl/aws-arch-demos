@@ -1,0 +1,60 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Module 6 Demo 2 — Aurora Serverless v2 with Data API
+
+Parameters:
+  VpcId:
+    Type: AWS::EC2::VPC::Id
+  SubnetIds:
+    Type: List<AWS::EC2::Subnet::Id>
+
+Resources:
+  Secret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: demo-db-aurora-secret
+      GenerateSecretString:
+        SecretStringTemplate: '{"username":"appuser"}'
+        GenerateStringKey: password
+        ExcludeCharacters: '"@/\'
+        PasswordLength: 24
+
+  SubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: demo
+      SubnetIds: !Ref SubnetIds
+
+  Sg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: aurora
+      VpcId: !Ref VpcId
+
+  Cluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      DBClusterIdentifier: demo-db-aurora-pg
+      Engine: aurora-postgresql
+      EngineVersion: "16.4"
+      DatabaseName: postgres
+      MasterUsername: !Sub '{{resolve:secretsmanager:${Secret}::username}}'
+      MasterUserPassword: !Sub '{{resolve:secretsmanager:${Secret}::password}}'
+      DBSubnetGroupName: !Ref SubnetGroup
+      VpcSecurityGroupIds: [!Ref Sg]
+      EnableHttpEndpoint: true
+      ServerlessV2ScalingConfiguration:
+        MinCapacity: 0.5
+        MaxCapacity: 2
+      StorageEncrypted: true
+
+  Instance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBInstanceIdentifier: demo-db-aurora-pg-instance
+      DBClusterIdentifier: !Ref Cluster
+      DBInstanceClass: db.serverless
+      Engine: aurora-postgresql
+
+Outputs:
+  ClusterArn: { Value: !Sub "arn:aws:rds:${AWS::Region}:${AWS::AccountId}:cluster:${Cluster}" }
+  SecretArn:  { Value: !Ref Secret }

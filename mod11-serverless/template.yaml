@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Module 11 — Serverless REST API (HTTP API + Lambda + DDB)
+
+Resources:
+  Table:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: demo-srv-items
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions: [{AttributeName: id, AttributeType: S}]
+      KeySchema: [{AttributeName: id, KeyType: HASH}]
+
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: [{Effect: Allow, Principal: {Service: lambda.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole]
+      Policies:
+        - PolicyName: ddb
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: [dynamodb:GetItem, dynamodb:PutItem]
+                Resource: !GetAtt Table.Arn
+
+  Fn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: demo-srv-fn
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt Role.Arn
+      Timeout: 10
+      Environment: { Variables: { TABLE: !Ref Table } }
+      Code:
+        ZipFile: |
+          import os, json, boto3
+          ddb = boto3.resource("dynamodb").Table(os.environ["TABLE"])
+          def handler(event, _):
+              method = event["requestContext"]["http"]["method"]
+              path   = event["requestContext"]["http"]["path"]
+              if method == "POST" and path == "/items":
+                  body = json.loads(event.get("body") or "{}")
+                  if "id" not in body: return _r(400, {"error":"id required"})
+                  ddb.put_item(Item=body)
+                  return _r(201, body)
+              if method == "GET" and path.startswith("/items/"):
+                  iid = path.split("/")[-1]
+                  r = ddb.get_item(Key={"id": iid}).get("Item")
+                  return _r(200, r) if r else _r(404, {"error":"not found"})
+              return _r(404, {"error":"route"})
+          def _r(s, b): return {"statusCode": s, "headers":{"content-type":"application/json"},
+                                "body": json.dumps(b)}
+
+  Api:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: demo-srv-api
+      ProtocolType: HTTP
+      Target: !GetAtt Fn.Arn
+
+  Perm:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref Fn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*"
+
+Outputs:
+  ApiUrl: { Value: !GetAtt Api.ApiEndpoint }

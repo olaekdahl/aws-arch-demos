@@ -1,0 +1,142 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Module 10 — Transit Gateway hub-and-spoke
+
+Parameters:
+  LatestAmi:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Resources:
+  Tgw:
+    Type: AWS::EC2::TransitGateway
+    Properties:
+      Description: demo-net2-tgw
+      DefaultRouteTableAssociation: enable
+      DefaultRouteTablePropagation: enable
+
+  # ----- VPC A -----
+  VpcA:
+    Type: AWS::EC2::VPC
+    Properties: { CidrBlock: 10.40.0.0/16, EnableDnsHostnames: true }
+  SubA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcA
+      CidrBlock: 10.40.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+  RtA:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref VpcA }
+  AssocA: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref SubA, RouteTableId: !Ref RtA } }
+
+  # ----- VPC B -----
+  VpcB:
+    Type: AWS::EC2::VPC
+    Properties: { CidrBlock: 10.41.0.0/16, EnableDnsHostnames: true }
+  SubB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VpcB
+      CidrBlock: 10.41.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs '']
+  RtB:
+    Type: AWS::EC2::RouteTable
+    Properties: { VpcId: !Ref VpcB }
+  AssocB: { Type: AWS::EC2::SubnetRouteTableAssociation, Properties: { SubnetId: !Ref SubB, RouteTableId: !Ref RtB } }
+
+  AttachA:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: { TransitGatewayId: !Ref Tgw, VpcId: !Ref VpcA, SubnetIds: [!Ref SubA] }
+  AttachB:
+    Type: AWS::EC2::TransitGatewayAttachment
+    Properties: { TransitGatewayId: !Ref Tgw, VpcId: !Ref VpcB, SubnetIds: [!Ref SubB] }
+
+  RouteAtoB:
+    Type: AWS::EC2::Route
+    DependsOn: AttachA
+    Properties: { RouteTableId: !Ref RtA, DestinationCidrBlock: 10.41.0.0/16, TransitGatewayId: !Ref Tgw }
+  RouteBtoA:
+    Type: AWS::EC2::Route
+    DependsOn: AttachB
+    Properties: { RouteTableId: !Ref RtB, DestinationCidrBlock: 10.40.0.0/16, TransitGatewayId: !Ref Tgw }
+
+  # SSM-enabled instances (no SSH)
+  Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement: [{Effect: Allow, Principal: {Service: ec2.amazonaws.com}, Action: sts:AssumeRole}]
+      ManagedPolicyArns: [arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore]
+  Profile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: { Roles: [!Ref Role] }
+
+  # SSM endpoints in each VPC so SSM works without IGW/NAT
+  SgA:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow icmp + https self
+      VpcId: !Ref VpcA
+      SecurityGroupIngress:
+        - { IpProtocol: icmp, FromPort: -1, ToPort: -1, CidrIp: 10.0.0.0/8 }
+        - { IpProtocol: tcp,  FromPort: 443, ToPort: 443, CidrIp: 10.40.0.0/16 }
+  SgB:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow icmp + https self
+      VpcId: !Ref VpcB
+      SecurityGroupIngress:
+        - { IpProtocol: icmp, FromPort: -1, ToPort: -1, CidrIp: 10.0.0.0/8 }
+        - { IpProtocol: tcp,  FromPort: 443, ToPort: 443, CidrIp: 10.41.0.0/16 }
+
+  EpAssm:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcA
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssm
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref SubA]
+      SecurityGroupIds: [!Ref SgA]
+      PrivateDnsEnabled: true
+  EpAssmMsg:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcA
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ssmmessages
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref SubA]
+      SecurityGroupIds: [!Ref SgA]
+      PrivateDnsEnabled: true
+  EpAec2Msg:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      VpcId: !Ref VpcA
+      ServiceName: !Sub com.amazonaws.${AWS::Region}.ec2messages
+      VpcEndpointType: Interface
+      SubnetIds: [!Ref SubA]
+      SecurityGroupIds: [!Ref SgA]
+      PrivateDnsEnabled: true
+
+  Ea:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmi
+      SubnetId: !Ref SubA
+      SecurityGroupIds: [!Ref SgA]
+      IamInstanceProfile: !Ref Profile
+      Tags: [{Key: Name, Value: demo-net2-ec2-a}]
+  Eb:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t3.micro
+      ImageId: !Ref LatestAmi
+      SubnetId: !Ref SubB
+      SecurityGroupIds: [!Ref SgB]
+      IamInstanceProfile: !Ref Profile
+      Tags: [{Key: Name, Value: demo-net2-ec2-b}]
+
+Outputs:
+  InstanceA: { Value: !Ref Ea }
+  InstanceB: { Value: !Ref Eb }
+  InstanceBPrivateIp: { Value: !GetAtt Eb.PrivateIp }
