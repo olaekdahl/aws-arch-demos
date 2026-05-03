@@ -164,6 +164,57 @@ aws ec2 describe-route-tables --region $AWS_REGION \
 aws logs tail /demo/vpc/flowlogs --region $AWS_REGION --since 5m
 ```
 
+### 6b. Analyzing Flow Logs
+
+The NAT Gateway's public Elastic IP attracts internet background-noise (port scans, bots).
+You can mine the flow logs to see what's hitting your edge.
+
+> **Important:** `ACCEPT` in flow logs reflects security-group/NACL evaluation, **not** delivery.
+> The NAT GW silently drops unsolicited inbound packets — `ACCEPT` here just means "no SG/NACL
+> denied it"; nothing inside the VPC actually receives it.
+>
+> **Field positions** (space-separated): `1:version 2:account 3:eni 4:srcAddr 5:dstAddr
+> 6:srcPort 7:dstPort 8:protocol 9:packets 10:bytes 11:start 12:end 13:action 14:status`.
+> Protocol numbers: `6=TCP, 17=UDP, 1=ICMP`.
+
+Quick CLI analysis:
+
+```bash
+LG=/demo/vpc/flowlogs
+
+# Top destination ports being scanned (last 15 min)
+aws logs filter-log-events --region us-east-1 --log-group-name $LG \
+  --start-time $(( ($(date +%s) - 900) * 1000 )) \
+  --query 'events[*].message' --output text \
+  | awk '{print $7}' | sort | uniq -c | sort -rn | head
+
+# Top source IPs (the scanners)
+aws logs filter-log-events --region us-east-1 --log-group-name $LG \
+  --start-time $(( ($(date +%s) - 900) * 1000 )) \
+  --query 'events[*].message' --output text \
+  | awk '{print $4}' | sort | uniq -c | sort -rn | head
+```
+
+Same questions in CloudWatch Logs Insights (richer queries):
+
+```
+fields @timestamp, srcAddr, dstAddr, dstPort, protocol, action
+| filter action="ACCEPT"
+| stats count(*) as hits by dstPort, protocol
+| sort hits desc
+| limit 20
+```
+
+### 6c. Generate identifiable traffic (optional)
+
+To distinguish *your* traffic from internet noise, launch a small EC2 in the private subnet
+and run egress workloads via SSM:
+
+```bash
+./traffic-gen.sh up      # launches t3.micro + curl/dig/ping via SSM
+./traffic-gen.sh down    # cleanup
+```
+
 ### 7. Cleanup
 ```bash
 aws cloudformation delete-stack --region us-east-1 --stack-name demo-net-vpc
