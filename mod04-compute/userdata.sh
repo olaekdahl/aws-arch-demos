@@ -13,12 +13,25 @@ set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
 NAME=demo-compute-userdata
 SG=demo-compute-userdata-sg
+ROLE=demo-compute-userdata-role
+PROFILE=demo-compute-userdata-profile
 cmd=${1:-deploy}
 
 deploy() {
   AMI=$(aws ssm get-parameter --region "$REGION" \
     --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
     --query Parameter.Value --output text)
+
+  # SSM-enabled instance profile so we can `aws ssm start-session` later (no SSH).
+  aws iam create-role --role-name "$ROLE" \
+    --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ec2.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
+    2>/dev/null || true
+  aws iam attach-role-policy --role-name "$ROLE" \
+    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore 2>/dev/null || true
+  aws iam create-instance-profile --instance-profile-name "$PROFILE" 2>/dev/null || true
+  aws iam add-role-to-instance-profile --instance-profile-name "$PROFILE" \
+    --role-name "$ROLE" 2>/dev/null || true
+  sleep 8  # IAM propagation
 
   VPC=$(aws ec2 describe-vpcs --region "$REGION" \
     --filters Name=is-default,Values=true \
@@ -69,6 +82,7 @@ EOF
 
   IID=$(aws ec2 run-instances --region "$REGION" \
     --image-id "$AMI" --instance-type t3.micro \
+    --iam-instance-profile Name="$PROFILE" \
     --subnet-id "$SUBNET" --security-group-ids "$SGID" \
     --associate-public-ip-address \
     --user-data file:///tmp/userdata.sh \
@@ -97,6 +111,13 @@ cleanup() {
     --filters Name=group-name,Values="$SG" \
     --query 'SecurityGroups[0].GroupId' --output text 2>/dev/null || echo "")
   [[ -n "$SGID" && "$SGID" != "None" ]] && aws ec2 delete-security-group --region "$REGION" --group-id "$SGID" || true
+
+  aws iam remove-role-from-instance-profile --instance-profile-name "$PROFILE" --role-name "$ROLE" 2>/dev/null || true
+  aws iam delete-instance-profile --instance-profile-name "$PROFILE" 2>/dev/null || true
+  aws iam detach-role-policy --role-name "$ROLE" \
+    --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore 2>/dev/null || true
+  aws iam delete-role --role-name "$ROLE" 2>/dev/null || true
+
   rm -f /tmp/userdata.sh
   echo "Cleanup done."
 }
