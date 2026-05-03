@@ -151,12 +151,17 @@ Outputs:
 
 ### 6. Validation
 ```bash
-aws ec2 describe-route-tables --region us-east-1 \
-  --filters "Name=vpc-id,Values=$(aws cloudformation describe-stacks \
-    --stack-name demo-net-vpc --query 'Stacks[0].Outputs[?OutputKey==`VpcId`].OutputValue' --output text)" \
+export AWS_REGION=us-east-1
+VPC=$(aws cloudformation describe-stacks --region $AWS_REGION \
+  --stack-name demo-net-vpc \
+  --query 'Stacks[0].Outputs[?OutputKey==`VpcId`].OutputValue' --output text)
+
+aws ec2 describe-route-tables --region $AWS_REGION \
+  --filters "Name=vpc-id,Values=$VPC" \
   --query 'RouteTables[*].Routes[*].[DestinationCidrBlock,NatGatewayId,GatewayId]'
+
 # After ~5 min, check flow logs:
-aws logs tail /demo/vpc/flowlogs --region us-east-1 --since 5m
+aws logs tail /demo/vpc/flowlogs --region $AWS_REGION --since 5m
 ```
 
 ### 7. Cleanup
