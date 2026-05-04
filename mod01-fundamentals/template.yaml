@@ -76,7 +76,8 @@ Resources:
         Fn::Base64: |
           #!/bin/bash
           dnf install -y httpd
-          AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+          TOKEN=$(curl -sX PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' http://169.254.169.254/latest/api/token)
+          AZ=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
           echo "<h1>Hello from $AZ</h1>" > /var/www/html/index.html
           systemctl enable --now httpd
   WebB:
@@ -91,7 +92,8 @@ Resources:
         Fn::Base64: |
           #!/bin/bash
           dnf install -y httpd
-          AZ=$(curl -s http://169.254.169.254/latest/meta-data/placement/availability-zone)
+          TOKEN=$(curl -sX PUT -H 'X-aws-ec2-metadata-token-ttl-seconds: 300' http://169.254.169.254/latest/api/token)
+          AZ=$(curl -s -H "X-aws-ec2-metadata-token: $TOKEN" http://169.254.169.254/latest/meta-data/placement/availability-zone)
           echo "<h1>Hello from $AZ</h1>" > /var/www/html/index.html
           systemctl enable --now httpd
 
