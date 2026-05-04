@@ -3,6 +3,12 @@
 **Topic:** ECS, EKS, Fargate, ECR.
 **Focus:** Build a serverless-container service end-to-end on ECS Fargate behind an ALB.
 
+## Quick commands
+```bash
+./deploy.sh                 # ECR push + CFN: ECS Fargate + ALB
+./cleanup.sh                # delete the stack + ECR repo
+```
+
 ---
 
 ## Demo 1: ECS Fargate + ECR + ALB (CloudFormation, single template)
@@ -83,7 +89,6 @@ Resources:
   LogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: /ecs/demo-ctr-app
       RetentionInDays: 7
 
   ExecRole:

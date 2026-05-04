@@ -3,6 +3,16 @@
 **Topic:** AWS Backup, RPO/RTO, DR strategies (backup/restore, pilot light, warm standby, multi-site).
 **Focus:** Use AWS Backup to centralize backups for an EC2 instance + DynamoDB table with a tag-based selection.
 
+## Quick commands
+```bash
+# Demo 1 — AWS Backup plan + on-demand job
+./deploy.sh
+./cleanup.sh
+
+# Demo 2 — interactive DR strategy helper
+bash dr.sh
+```
+
 ---
 
 ## Demo 1: AWS Backup Plan with Tag-Based Selection (CloudFormation)

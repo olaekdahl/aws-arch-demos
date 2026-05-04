@@ -3,6 +3,18 @@
 **Topic:** EC2 instance types/AMIs/purchasing options, Lambda intro, Auto Scaling foundations.
 **Focus:** Hands-on launching EC2 with SSM Session Manager (no SSH), and launching a Lambda — comparing the two compute models.
 
+## Quick commands
+```bash
+# Demo 1 — EC2 + SSM Session Manager
+./demo.sh deploy
+./demo.sh cleanup
+
+# Demo 2 — Lambda function
+python3 deploy.py deploy
+python3 deploy.py invoke
+python3 deploy.py cleanup
+```
+
 ---
 
 ## Demo 1: EC2 Launch with SSM Session Manager (AWS CLI)

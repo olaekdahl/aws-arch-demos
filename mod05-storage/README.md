@@ -3,6 +3,18 @@
 **Topic:** S3 (classes, lifecycle, versioning), EBS, EFS, FSx — picking the right storage.
 **Focus:** Demonstrate S3 versioning + lifecycle tiering — the most common architectural decision.
 
+## Quick commands
+```bash
+# Demo 1 — S3 versioning + lifecycle
+python3 demo.py deploy
+python3 demo.py upload
+python3 demo.py inspect
+python3 demo.py cleanup
+
+# Demo 2 — interactive storage recommender
+bash recommend.sh
+```
+
 ---
 
 ## Demo 1: S3 Versioned Bucket with Lifecycle Tiering (Python boto3)

@@ -86,7 +86,7 @@ Resources:
                 Resource: "*"
   FlowLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /demo/vpc/flowlogs, RetentionInDays: 7 }
+    Properties: { RetentionInDays: 7 }
   FlowLog:
     Type: AWS::EC2::FlowLog
     Properties:
@@ -101,3 +101,4 @@ Outputs:
   VpcId:    { Value: !Ref Vpc }
   PrivateA: { Value: !Ref PrivA }
   PrivateB: { Value: !Ref PrivB }
+  FlowLogGroup: { Value: !Ref FlowLogGroup }

@@ -3,6 +3,23 @@
 **Topic:** VPC, subnets, route tables, IGW/NAT, SG vs NACL.
 **Focus:** Build a production-shaped VPC with public + private subnets and validate the routing/SG behavior.
 
+## Quick commands
+```bash
+# Demo 1 — production-shaped VPC + flow logs
+./deploy.sh                                 # CFN: 2-AZ VPC, NAT GW, flow logs
+./validate.sh                               # show route tables + tail flow logs
+./traffic-gen.sh deploy                     # launch t3.micro, generate egress
+./traffic-gen.sh cleanup                    # remove traffic generator
+./cleanup.sh                                # delete VPC stack
+
+# Demo 2 — hybrid SSM (laptop -> EC2 -> Azure VM)
+./hybrid-ssm.sh deploy                      # SSM activation + EC2 jump host
+ACT_CODE=<paste> ./azure-vm.sh deploy       # Azure Linux VM, auto-registers
+./azure-vm.sh status && ./hybrid-ssm.sh status
+./azure-vm.sh cleanup                       # delete Azure resource group
+./hybrid-ssm.sh cleanup                     # terminate EC2, deregister mi-*
+```
+
 ---
 
 ## Demo 1: Production-Shaped VPC (CloudFormation)
@@ -132,7 +149,7 @@ Resources:
                 Resource: "*"
   FlowLogGroup:
     Type: AWS::Logs::LogGroup
-    Properties: { LogGroupName: /demo/vpc/flowlogs, RetentionInDays: 7 }
+    Properties: { RetentionInDays: 7 }   # auto-named so re-deploys never collide
   FlowLog:
     Type: AWS::EC2::FlowLog
     Properties:
@@ -144,9 +161,10 @@ Resources:
       DeliverLogsPermissionArn: !GetAtt FlowLogRole.Arn
 
 Outputs:
-  VpcId:    { Value: !Ref Vpc }
-  PrivateA: { Value: !Ref PrivA }
-  PrivateB: { Value: !Ref PrivB }
+  VpcId:        { Value: !Ref Vpc }
+  PrivateA:     { Value: !Ref PrivA }
+  PrivateB:     { Value: !Ref PrivB }
+  FlowLogGroup: { Value: !Ref FlowLogGroup }
 ```
 
 ### 6. Validation
@@ -155,13 +173,16 @@ export AWS_REGION=us-east-1
 VPC=$(aws cloudformation describe-stacks --region $AWS_REGION \
   --stack-name demo-net-vpc \
   --query 'Stacks[0].Outputs[?OutputKey==`VpcId`].OutputValue' --output text)
+LG=$(aws cloudformation describe-stacks --region $AWS_REGION \
+  --stack-name demo-net-vpc \
+  --query 'Stacks[0].Outputs[?OutputKey==`FlowLogGroup`].OutputValue' --output text)
 
 aws ec2 describe-route-tables --region $AWS_REGION \
   --filters "Name=vpc-id,Values=$VPC" \
   --query 'RouteTables[*].Routes[*].[DestinationCidrBlock,NatGatewayId,GatewayId]'
 
-# After ~5 min, check flow logs:
-aws logs tail /demo/vpc/flowlogs --region $AWS_REGION --since 5m
+# After ~5 min, check flow logs (log-group name is auto-generated):
+aws logs tail "$LG" --region $AWS_REGION --since 5m
 ```
 
 ### 6b. Analyzing Flow Logs
@@ -180,7 +201,10 @@ You can mine the flow logs to see what's hitting your edge.
 Quick CLI analysis:
 
 ```bash
-LG=/demo/vpc/flowlogs
+# Resolve the auto-generated log group name from the stack output:
+LG=$(aws cloudformation describe-stacks --region us-east-1 \
+  --stack-name demo-net-vpc \
+  --query 'Stacks[0].Outputs[?OutputKey==`FlowLogGroup`].OutputValue' --output text)
 
 # Top destination ports being scanned (last 15 min)
 aws logs filter-log-events --region us-east-1 --log-group-name $LG \
@@ -221,3 +245,104 @@ aws cloudformation delete-stack --region us-east-1 --stack-name demo-net-vpc
 ```
 
 > **Cost note:** NAT Gateway ≈ $0.045/hr + data. Tear down promptly.
+
+---
+
+## Demo 2: Hybrid Connectivity — Laptop → EC2 → Azure VM (all over SSM)
+
+### 1. Overview
+- **What it shows:** Cross-cloud, zero-inbound-port management plane. The laptop reaches an EC2 jump host in a private subnet using **Session Manager**, and from that EC2 it hops to an **Azure VM** that has been registered as an AWS **hybrid managed instance** (`mi-…`). No SSH keys, no public IPs, no inbound security-group rules anywhere in the chain.
+- **Use case:** Operate Linux/Windows fleets that live outside AWS (on-prem, Azure, GCP, edge) with the same IAM-gated tooling you use for EC2.
+- **Services:** SSM Session Manager, SSM Hybrid Activations, IAM, EC2.
+
+### 2. Architecture
+```
+  Laptop                             AWS                                    Azure
+  ------                             ---                                    -----
+  aws ssm start-session   --TLS-->  [ ssmmessages.<region>.amazonaws.com ]
+                                              |
+                                              v
+                                     EC2 jump host (private subnet)
+                                     - SSM agent (outbound 443 via NAT GW)
+                                     - role: SSMManagedInstanceCore
+                                            + ssm:StartSession on mi-*
+                                              |
+                                  aws ssm start-session --target mi-xxxx
+                                              |
+                                              v   <--TLS--   Azure VM (mi-xxxx)
+                                                             - SSM agent registered via
+                                                               hybrid activation code
+                                                             - assumes role
+                                                               SSMManagedInstanceCore
+```
+
+### 3. Prerequisites
+- Demo 1 stack (`demo-net-vpc`) deployed.
+- Laptop has `aws` CLI **and** the `session-manager-plugin` installed.
+- An Azure VM (Linux or Windows) with outbound HTTPS to `*.amazonaws.com`. No NSG inbound rules required.
+
+### 4. Step-by-Step
+```bash
+# 1) Create the hybrid activation + EC2 jump host. Prints the three hops.
+./hybrid-ssm.sh deploy
+
+# 2a) Option A — automated: deploy an Azure Linux VM that auto-registers via cloud-init.
+#     Pass the ACT_CODE printed by step (1); ACT_ID is auto-discovered from AWS.
+ACT_CODE=<paste-from-step-1> ./azure-vm.sh deploy
+
+# 2b) Option B — manual: on any existing Azure VM, paste the registration block
+#     printed by ./hybrid-ssm.sh (Linux .deb/.rpm or Windows AmazonSSMAgentSetup.exe).
+
+# 3) Confirm the VM appears as `mi-xxxxxxxx`:
+aws ssm describe-instance-information --region us-east-1 \
+  --query 'InstanceInformationList[*].[InstanceId,PingStatus,PlatformName,ComputerName]' \
+  --output table
+
+# 3) Hop 1: from your laptop to the EC2 jump host.
+EC2=$(aws ec2 describe-instances --region us-east-1 \
+  --filters "Name=tag:Name,Values=demo-net-hybrid-jump" "Name=instance-state-name,Values=running" \
+  --query 'Reservations[0].Instances[0].InstanceId' --output text)
+aws ssm start-session --region us-east-1 --target "$EC2"
+
+# 4) Hop 2: from inside the EC2 shell, jump to the Azure VM.
+MI=$(aws ssm describe-instance-information --region us-east-1 \
+       --query 'InstanceInformationList[?starts_with(InstanceId,`mi-`)]|[0].InstanceId' --output text)
+aws ssm start-session --region us-east-1 --target "$MI"
+# You're now in an interactive shell *on the Azure VM*. `hostname && uname -a`.
+```
+
+### 5. Why this works (no inbound ports anywhere)
+- Session Manager is a **reverse tunnel**: the SSM agent (on EC2 *and* on the Azure VM) opens an outbound TLS connection to `ssmmessages.<region>.amazonaws.com` and waits. The laptop's `start-session` call meets that connection at the AWS control plane.
+- The EC2 jump host is in a **private subnet** — egress only via the NAT Gateway from Demo 1.
+- The Azure VM only needs **egress 443** to AWS; no Azure NSG inbound rule, no VPN/peering, no public IP.
+- Authentication is IAM end-to-end: the laptop's principal must have `ssm:StartSession` on the EC2; the EC2 instance role must have `ssm:StartSession` on `arn:aws:ssm:*:*:managed-instance/mi-*`; the Azure VM authenticates with the activation code at registration time and then uses its `SSMManagedInstanceCore` role for ongoing API calls.
+
+### 6. Validation
+```bash
+./hybrid-ssm.sh status
+# Expected:
+#   - one running EC2 jump host
+#   - one i-xxx and one mi-xxx with PingStatus=Online
+#   - one activation with RegistrationsCount >= 1, Expired=False
+```
+
+Audit the trail in CloudTrail — every session is logged:
+```bash
+aws cloudtrail lookup-events --region us-east-1 \
+  --lookup-attributes AttributeKey=EventName,AttributeValue=StartSession \
+  --max-results 5 \
+  --query 'Events[*].[EventTime,Username,Resources[0].ResourceName]' --output table
+```
+
+### 7. Cleanup
+```bash
+./azure-vm.sh cleanup      # delete Azure RG (VM, NIC, VNet, NSG, disks)
+./hybrid-ssm.sh cleanup    # terminate EC2, deregister mi-*, delete activation + roles
+```
+If you registered an Azure VM manually (Option B above), also run on the VM itself:
+```bash
+sudo amazon-ssm-agent -deregister || true
+sudo systemctl stop amazon-ssm-agent || true
+```
+
+> **Cost note:** EC2 jump host (~t3.micro) + the existing NAT GW from Demo 1. SSM Session Manager itself is free; hybrid managed instances are $0 for **advanced-tier** features only if you exceed 1,000 instances per account/region — for one Azure VM, the cost is the EC2 + data transfer.

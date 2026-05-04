@@ -3,6 +3,14 @@
 **Topic:** Recap & Well-Architected review.
 **Focus:** Run a Well-Architected lens review programmatically against the workload created in Module 0 — closing the loop on the course.
 
+## Quick commands
+```bash
+python3 demo.py review      # answer first 3 Qs per pillar
+python3 demo.py milestone   # snapshot the workload state
+python3 demo.py summary     # print pillar risk counts
+python3 demo.py cleanup     # optional: delete workload
+```
+
 ---
 
 ## Demo 1: Programmatic Well-Architected Lens Review (Python boto3)

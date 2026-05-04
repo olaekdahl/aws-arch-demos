@@ -3,6 +3,12 @@
 **Topic:** CloudFront, Global Accelerator, AWS WAF, Shield.
 **Focus:** Front an S3 origin with CloudFront + Origin Access Control + a WAF web ACL — the canonical secure static-site edge pattern.
 
+## Quick commands
+```bash
+./deploy.sh                 # CFN: CloudFront + S3 (OAC) + WAFv2
+./cleanup.sh                # delete the stack
+```
+
 ---
 
 ## Demo 1: CloudFront + S3 (OAC) + WAF (CloudFormation)

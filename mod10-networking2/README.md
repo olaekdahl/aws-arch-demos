@@ -3,6 +3,12 @@
 **Topic:** VPC peering, Transit Gateway, PrivateLink, hybrid connectivity, Route 53.
 **Focus:** Demonstrate VPC-to-VPC connectivity using a Transit Gateway — the modern hub-and-spoke pattern.
 
+## Quick commands
+```bash
+./deploy.sh                 # CFN: 2 VPCs + TGW + 2 EC2 (SSM)
+./cleanup.sh                # delete the stack
+```
+
 ---
 
 ## Demo 1: Transit Gateway Hub-and-Spoke (CloudFormation)

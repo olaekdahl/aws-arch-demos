@@ -3,6 +3,17 @@
 **Topic:** IAM identities, policies, roles, federation, account hardening.
 **Focus:** Implement least-privilege identity patterns and detect risky configurations.
 
+## Quick commands
+```bash
+# Demo 1 — least-privilege role + simulator
+python3 demo.py deploy
+python3 demo.py simulate
+python3 demo.py cleanup
+
+# Demo 2 — account hardening audit (read-only)
+bash audit.sh
+```
+
 ---
 
 ## Demo 1: Least-Privilege Role + Cross-Service AssumeRole (boto3)

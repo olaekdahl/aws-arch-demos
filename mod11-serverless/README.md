@@ -3,6 +3,19 @@
 **Topic:** Lambda, API Gateway, Step Functions, EventBridge, SQS/SNS.
 **Focus:** Build a complete event-driven serverless API: API Gateway → Lambda → DynamoDB, plus an async path via EventBridge.
 
+## Quick commands
+```bash
+# Demo 1 — Serverless REST API (CFN)
+./deploy.sh
+./cleanup.sh
+
+# Demo 2 — EventBridge async path
+python3 demo.py deploy
+python3 demo.py publish
+python3 demo.py receive
+python3 demo.py cleanup
+```
+
 ---
 
 ## Demo 1: Serverless REST API (CloudFormation, single template)

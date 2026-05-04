@@ -3,6 +3,13 @@
 **Topic:** Course logistics & Well-Architected Framework orientation.
 **Focus:** Get hands-on with the AWS account and inspect Well-Architected posture before diving into services.
 
+## Quick commands
+```bash
+python3 demo.py discover    # inventory account (STS, EC2, S3, IAM)
+python3 demo.py deploy      # create WA Tool workload
+python3 demo.py cleanup     # delete WA workload
+```
+
 ---
 
 ## Demo 1: Account Discovery & Well-Architected Tool Workload

@@ -3,6 +3,12 @@
 **Topic:** CloudWatch metrics/alarms/logs, ELB health checks, Auto Scaling Groups, target tracking.
 **Focus:** Build an ALB + ASG with target-tracking autoscaling and CloudWatch alarms — observe a scale-out event live.
 
+## Quick commands
+```bash
+./deploy.sh                 # CFN: ALB + ASG + target tracking + alarms
+./cleanup.sh                # delete the stack
+```
+
 ---
 
 ## Demo 1: ALB + ASG with Target-Tracking Auto Scaling (CloudFormation)

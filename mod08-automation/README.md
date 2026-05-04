@@ -3,6 +3,17 @@
 **Topic:** Infrastructure-as-code with CloudFormation, Systems Manager automation.
 **Focus:** Use a parameterized CloudFormation template with change sets, and an SSM Automation runbook for routine ops.
 
+## Quick commands
+```bash
+# Demo 1 — CFN change set workflow (v1 -> v2)
+bash run.sh
+./cleanup.sh
+
+# Demo 2 — SSM Automation runbook
+python3 demo.py run
+python3 demo.py status
+```
+
 ---
 
 ## Demo 1: CloudFormation Change Sets Workflow (CLI)

@@ -3,6 +3,12 @@
 **Topic:** Region/AZ model, basic 3-tier thinking, shared responsibility.
 **Focus:** Build a minimal multi-AZ-aware foundation to experience the global infrastructure firsthand.
 
+## Quick commands
+```bash
+./deploy.sh                 # CFN: VPC + 2 AZ EC2 + ALB
+./cleanup.sh                # delete the stack
+```
+
 ---
 
 ## Demo 1: Multi-AZ "Hello Architecture" — VPC + EC2 across 2 AZs (CloudFormation)

@@ -3,6 +3,19 @@
 **Topic:** RDS, Aurora, DynamoDB, ElastiCache — relational vs NoSQL, managed vs self-hosted.
 **Focus:** Provision a DynamoDB table with on-demand pricing + GSI, and an RDS-equivalent demo via Aurora Serverless v2 (alternative).
 
+## Quick commands
+```bash
+# Demo 1 — DynamoDB single-table + GSI
+python3 demo.py deploy
+python3 demo.py seed
+python3 demo.py query
+python3 demo.py cleanup
+
+# Demo 2 — Aurora Serverless v2 (CFN)
+./deploy.sh
+./cleanup.sh
+```
+
 ---
 
 ## Demo 1: DynamoDB Single-Table Design with GSI (Python boto3)
