@@ -1,34 +1,35 @@
 #!/usr/bin/env bash
-# Module 3 — Hybrid SSM demo: laptop -> SSM -> EC2 (in private subnet) -> SSM -> Azure VM.
+# Module 10 — Hybrid SSM jump host for the cross-cloud peering demo.
+# Self-contained mod10 copy (parallel to mod03's hybrid-ssm.sh) — uses 'demo-net2-*'
+# resource names so it can run alongside mod03's version without colliding.
 #
 # What this script does:
 #   1. Creates an SSM hybrid activation (ActivationId / ActivationCode) used to register
 #      the Azure VM as an AWS managed instance (mi-xxxx).
-#   2. Launches an EC2 jump host in the demo-net-vpc private subnet with:
+#   2. Launches an EC2 jump host in the demo-net2-vpc private subnet with:
 #        - AmazonSSMManagedInstanceCore  (so the laptop can `start-session` to it)
 #        - inline policy granting `ssm:StartSession` on managed instances (mi-*)
-#        - userdata that installs the AWS CLI v2 + session-manager-plugin
-#      so that, once you SSH-via-SSM into it, you can hop to the Azure VM with
-#      `aws ssm start-session --target mi-xxxx`.
-#   3. Prints the exact registration commands to run on the Azure VM (Linux + Windows).
+#        - userdata that installs the session-manager-plugin
+#   3. Switches the SSM activation tier to 'advanced' (required for Session Manager
+#      to hybrid mi-* instances). cleanup resets it back to 'standard'.
+#   4. Prints registration commands for the Azure VM (or just run ./azure-vm.sh deploy).
 #
 # Prereqs:
-#   - demo-net-vpc stack already deployed (./deploy.sh)
-#   - On laptop: aws cli + session-manager-plugin (https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html)
-#   - Azure VM with outbound 443 to *.amazonaws.com (no inbound rules required)
+#   - peering.sh deploy (or its ensure_vpc) has created stack 'demo-net2-vpc'
+#   - On laptop: aws cli + session-manager-plugin
 #
 # Usage:
-#   ./hybrid-ssm.sh deploy     # create activation + EC2 jump host, print connect/register cmds
-#   ./hybrid-ssm.sh status     # show registered hybrid managed instances + jump host
-#   ./hybrid-ssm.sh cleanup    # tear down EC2, role, activation, deregister mi-*
+#   ./hybrid-ssm.sh deploy
+#   ./hybrid-ssm.sh status
+#   ./hybrid-ssm.sh cleanup
 set -euo pipefail
 REGION="${AWS_REGION:-us-east-1}"
-STACK=demo-net-vpc
-NAME=demo-net-hybrid-jump
-ROLE_EC2=demo-net-hybrid-ec2-role
-PROFILE_EC2=demo-net-hybrid-ec2-profile
-ROLE_HYBRID=demo-net-hybrid-activation-role     # role assumed by the on-prem/Azure VM
-ACTIVATION_DESC="demo-net-hybrid-azure"
+STACK=demo-net2-vpc
+NAME=demo-net2-hybrid-jump
+ROLE_EC2=demo-net2-hybrid-ec2-role
+PROFILE_EC2=demo-net2-hybrid-ec2-profile
+ROLE_HYBRID=demo-net2-hybrid-activation-role
+ACTIVATION_DESC="demo-net2-hybrid-azure"
 
 cmd="${1:-deploy}"
 
@@ -38,7 +39,6 @@ vpc_outputs() {
 }
 
 tier_setting_id() {
-  # account+region-scoped service setting controlling hybrid SSM tier (standard|advanced)
   local acct
   acct=$(aws sts get-caller-identity --query Account --output text)
   echo "arn:aws:ssm:${REGION}:${acct}:servicesetting/ssm/managed-instance/activation-tier"
@@ -59,7 +59,6 @@ set_activation_tier() {
 }
 
 ensure_hybrid_role() {
-  # Role that the registered Azure VM will assume — gives it the SSM agent permissions.
   aws iam create-role --role-name "$ROLE_HYBRID" \
     --assume-role-policy-document '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ssm.amazonaws.com"},"Action":"sts:AssumeRole"}]}' \
     2>/dev/null || true
@@ -73,7 +72,6 @@ ensure_ec2_role() {
     2>/dev/null || true
   aws iam attach-role-policy --role-name "$ROLE_EC2" \
     --policy-arn arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
-  # Inline: allow this EC2 to start sessions to hybrid managed instances (mi-*).
   aws iam put-role-policy --role-name "$ROLE_EC2" \
     --policy-name HopToManagedInstances \
     --policy-document '{
@@ -101,7 +99,6 @@ deploy() {
   set_activation_tier advanced
   sleep 8  # IAM propagation
 
-  # --- 1. SSM hybrid activation (single-use is fine; allow 5 registrations) ---
   echo
   echo "== Creating SSM hybrid activation =="
   ACT_JSON=$(aws ssm create-activation --region "$REGION" \
@@ -115,7 +112,6 @@ deploy() {
   echo "ActivationId:   $ACT_ID"
   echo "ActivationCode: $ACT_CODE  (treat as a secret; expires in 24h)"
 
-  # --- 2. EC2 jump host in private subnet ---
   AMI=$(aws ssm get-parameter --region "$REGION" \
     --name /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64 \
     --query Parameter.Value --output text)
@@ -126,9 +122,8 @@ deploy() {
         || aws ec2 describe-security-groups --region "$REGION" \
             --filters "Name=group-name,Values=$NAME-sg" "Name=vpc-id,Values=$VPC" \
             --query 'SecurityGroups[0].GroupId' --output text)
-  echo "SG:     $SG  (egress-only; SSM is a reverse tunnel, no inbound needed)"
+  echo "SG:     $SG  (egress-only)"
 
-  # Userdata installs session-manager-plugin so the EC2 can start sessions outbound.
   USERDATA=$(cat <<'EOF'
 #!/bin/bash
 set -e
@@ -150,39 +145,28 @@ EOF
   cat <<EOF
 
 ============================================================
- Hybrid SSM demo is ready. Three hops:
+ Hybrid SSM (mod10) ready. Three hops:
 ============================================================
 
-[ Hop 1 ]  Laptop  ->  EC2 jump host (Session Manager)
+[ Hop 1 ]  Laptop -> EC2 jump host:
     aws ssm start-session --region $REGION --target $IID
 
-[ Hop 2 ]  On the Azure VM, register it as an AWS managed instance.
+[ Hop 2 ]  Register the Azure VM as a managed instance.
+           Easiest:
+             ACT_CODE=$ACT_CODE ./azure-vm.sh deploy
+           Or manually on any Linux box with outbound 443:
+             curl -L https://s3.$REGION.amazonaws.com/amazon-ssm-$REGION/latest/linux_amd64/amazon-ssm-agent.deb -o /tmp/ssm.deb
+             sudo dpkg -i /tmp/ssm.deb
+             sudo service amazon-ssm-agent stop || true
+             sudo amazon-ssm-agent -register -code "$ACT_CODE" -id "$ACT_ID" -region "$REGION"
+             sudo service amazon-ssm-agent start
 
-  -- Linux (amd64) --
-    mkdir -p /tmp/ssm && cd /tmp/ssm
-    curl -L https://s3.$REGION.amazonaws.com/amazon-ssm-$REGION/latest/linux_amd64/amazon-ssm-agent.deb -o ssm.deb \\
-      || curl -L https://s3.$REGION.amazonaws.com/amazon-ssm-$REGION/latest/linux_amd64/amazon-ssm-agent.rpm -o ssm.rpm
-    sudo dpkg -i ssm.deb 2>/dev/null || sudo rpm -i ssm.rpm
-    sudo service amazon-ssm-agent stop || true
-    sudo amazon-ssm-agent -register -code "$ACT_CODE" -id "$ACT_ID" -region "$REGION"
-    sudo service amazon-ssm-agent start
-
-  -- Windows (PowerShell, admin) --
-    \$code = "$ACT_CODE"; \$id = "$ACT_ID"; \$region = "$REGION"
-    \$dir = "\$env:TEMP\\ssm"; mkdir \$dir -Force | Out-Null; cd \$dir
-    Invoke-WebRequest "https://amazon-ssm-\$region.s3.\$region.amazonaws.com/latest/windows_amd64/AmazonSSMAgentSetup.exe" -OutFile setup.exe
-    Start-Process .\\setup.exe -ArgumentList "/q","/log","install.log","CODE=\$code","ID=\$id","REGION=\$region" -Wait
-
-  Verify from the laptop (it should show a 'mi-...' instance id):
-    aws ssm describe-instance-information --region $REGION \\
-      --query 'InstanceInformationList[*].[InstanceId,PingStatus,PlatformName,IPAddress]' --output table
-
-[ Hop 3 ]  From inside the EC2 jump host, hop to the Azure VM:
+[ Hop 3 ]  From the EC2 jump host:
     MI=\$(aws ssm describe-instance-information --region $REGION \\
             --query 'InstanceInformationList[?starts_with(InstanceId,\`mi-\`)]|[0].InstanceId' --output text)
     aws ssm start-session --region $REGION --target \$MI
 
-When you are done:  ./hybrid-ssm.sh cleanup
+When done:  ./hybrid-ssm.sh cleanup
 EOF
 }
 
@@ -200,16 +184,20 @@ status() {
 }
 
 cleanup() {
-  echo "== Deregistering hybrid managed instances =="
-  for MI in $(aws ssm describe-instance-information --region "$REGION" \
-                --query 'InstanceInformationList[?starts_with(InstanceId, `mi-`)].InstanceId' --output text); do
-    echo "  deregister $MI"
-    aws ssm deregister-managed-instance --region "$REGION" --instance-id "$MI" || true
+  echo "== Deregistering hybrid managed instances (mod10 activations only) =="
+  ACT_IDS=$(aws ssm describe-activations --region "$REGION" \
+              --query "ActivationList[?Description=='$ACTIVATION_DESC'].ActivationId" --output text || true)
+  for AID in $ACT_IDS; do
+    for MI in $(aws ssm describe-instance-information --region "$REGION" \
+                  --filters "Key=ActivationIds,Values=$AID" \
+                  --query 'InstanceInformationList[?starts_with(InstanceId,`mi-`)].InstanceId' --output text); do
+      echo "  deregister $MI"
+      aws ssm deregister-managed-instance --region "$REGION" --instance-id "$MI" || true
+    done
   done
 
   echo "== Deleting activations =="
-  for AID in $(aws ssm describe-activations --region "$REGION" \
-                 --query "ActivationList[?Description=='$ACTIVATION_DESC'].ActivationId" --output text); do
+  for AID in $ACT_IDS; do
     aws ssm delete-activation --region "$REGION" --activation-id "$AID" || true
   done
 

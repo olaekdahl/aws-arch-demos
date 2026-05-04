@@ -1,38 +1,29 @@
 #!/usr/bin/env bash
-# Module 3 — Deploy an Azure Linux VM that auto-registers as an AWS SSM hybrid managed instance.
-#
-# What this script does:
-#   1. Reads the most recent SSM hybrid activation created by ./hybrid-ssm.sh
-#      (or accepts ACT_ID / ACT_CODE via env vars).
-#   2. Creates an Azure resource group + VNet/subnet + NSG (egress-only, NO inbound rules).
-#   3. Launches an Ubuntu 22.04 VM with cloud-init that:
-#        - installs amazon-ssm-agent (.deb)
-#        - registers against the AWS activation code
-#        - starts the agent
-#   4. Waits until the VM appears in `aws ssm describe-instance-information` as `mi-...`.
+# Module 10 — Azure Linux VM that auto-registers as an AWS SSM hybrid managed instance.
+# Self-contained mod10 copy (parallel to mod03's azure-vm.sh). Uses 'demo-net2-*' names
+# so it can run alongside mod03's version without colliding.
 #
 # Prereqs:
-#   - Azure CLI logged in (`az login --tenant <id>` already done)
-#   - AWS CLI configured for the same region as ./hybrid-ssm.sh
-#   - ./hybrid-ssm.sh deploy already run (so an activation exists), OR pass ACT_ID/ACT_CODE
+#   - ./hybrid-ssm.sh deploy already run (creates the activation), OR pass ACT_ID/ACT_CODE.
+#   - Azure CLI logged in.
 #
 # Usage:
-#   ./azure-vm.sh deploy     # create RG + VNet + Ubuntu VM + register
-#   ./azure-vm.sh status     # show Azure VM + AWS hybrid registration
-#   ./azure-vm.sh cleanup    # delete the resource group (everything in it)
+#   ./azure-vm.sh deploy
+#   ./azure-vm.sh status
+#   ./azure-vm.sh cleanup
 set -euo pipefail
 
 AWS_REGION="${AWS_REGION:-us-east-1}"
 AZ_LOCATION="${AZ_LOCATION:-eastus}"
-AZ_RG="${AZ_RG:-demo-net-hybrid-rg}"
-AZ_VM="${AZ_VM:-demo-net-azure-vm}"
-AZ_VNET="${AZ_VNET:-demo-net-hybrid-vnet}"
+AZ_RG="${AZ_RG:-demo-net2-hybrid-rg}"
+AZ_VM="${AZ_VM:-demo-net2-azure-vm}"
+AZ_VNET="${AZ_VNET:-demo-net2-hybrid-vnet}"
 AZ_SUBNET="${AZ_SUBNET:-default}"
-AZ_NSG="${AZ_NSG:-demo-net-hybrid-nsg}"
+AZ_NSG="${AZ_NSG:-demo-net2-hybrid-nsg}"
 AZ_SIZE="${AZ_SIZE:-Standard_B1s}"
-AZ_IMAGE="${AZ_IMAGE:-Ubuntu2204}"     # az vm image alias
+AZ_IMAGE="${AZ_IMAGE:-Ubuntu2204}"
 AZ_USER="${AZ_USER:-azureuser}"
-ACTIVATION_DESC="demo-net-hybrid-azure"
+ACTIVATION_DESC="demo-net2-hybrid-azure"
 
 cmd="${1:-deploy}"
 
@@ -52,17 +43,13 @@ resolve_activation() {
 No SSM activation found in $AWS_REGION with description '$ACTIVATION_DESC'.
 Run ./hybrid-ssm.sh deploy first, or pass ACT_ID and ACT_CODE as env vars:
   ACT_ID=... ACT_CODE=... $0 deploy
-Note: ActivationCode is only returned at create time. If you have the ID but
-not the code, recreate the activation:
-  aws ssm create-activation --region $AWS_REGION --description "$ACTIVATION_DESC" \\
-    --iam-role demo-net-hybrid-activation-role --registration-limit 5
 EOF
     exit 1
   fi
   ACT_ID=$(echo "$ACT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['ActivationId'])")
   EXPIRED=$(echo "$ACT_JSON" | python3 -c "import sys,json;print(json.load(sys.stdin)['Expired'])")
   if [[ "$EXPIRED" == "True" ]]; then
-    echo "Activation $ACT_ID is expired. Re-run ./hybrid-ssm.sh deploy or create a new one." >&2
+    echo "Activation $ACT_ID is expired. Re-run ./hybrid-ssm.sh deploy." >&2
     exit 1
   fi
   if [[ -z "${ACT_CODE:-}" ]]; then
@@ -70,8 +57,7 @@ EOF
 Found ActivationId $ACT_ID but ActivationCode is not retrievable after creation.
 Pass it explicitly (printed by ./hybrid-ssm.sh deploy):
   ACT_CODE=... $0 deploy
-Or create a fresh activation:
-  ./hybrid-ssm.sh cleanup && ./hybrid-ssm.sh deploy
+Or recreate:  ./hybrid-ssm.sh cleanup && ./hybrid-ssm.sh deploy
 EOF
     exit 1
   fi
@@ -91,11 +77,14 @@ deploy() {
 
   echo
   echo "== Creating VNet/subnet/NSG (egress-only) =="
-  az network vnet create -g "$AZ_RG" -n "$AZ_VNET" \
-    --address-prefix 10.40.0.0/16 \
-    --subnet-name "$AZ_SUBNET" --subnet-prefix 10.40.1.0/24 -o none
-  az network nsg create -g "$AZ_RG" -n "$AZ_NSG" -o none
-  # No inbound rules added — SSM is a reverse tunnel. Default Azure egress is allow-all.
+  # NOTE: peering.sh expects this same VNet (10.40.0.0/16) and adds a GatewaySubnet
+  # to it. Order doesn't matter — whichever runs first creates the VNet.
+  az network vnet show -g "$AZ_RG" -n "$AZ_VNET" -o none 2>/dev/null \
+    || az network vnet create -g "$AZ_RG" -n "$AZ_VNET" \
+         --address-prefix 10.40.0.0/16 \
+         --subnet-name "$AZ_SUBNET" --subnet-prefix 10.40.1.0/24 -o none
+  az network nsg show -g "$AZ_RG" -n "$AZ_NSG" -o none 2>/dev/null \
+    || az network nsg create -g "$AZ_RG" -n "$AZ_NSG" -o none
 
   echo
   echo "== Rendering cloud-init (installs + registers SSM agent) =="
@@ -112,7 +101,6 @@ EOF
 
   echo
   echo "== Creating VM ($AZ_VM, $AZ_SIZE, $AZ_IMAGE) =="
-  # --public-ip-address "" disables a public IP entirely. The VM only needs egress 443.
   az vm create \
     -g "$AZ_RG" -n "$AZ_VM" \
     --image "$AZ_IMAGE" \
@@ -150,21 +138,17 @@ EOF
   cat <<EOF
 
 ============================================================
- Azure VM is registered as AWS managed instance: $MI
+ Azure VM registered as AWS managed instance: $MI
 ============================================================
 
-Test the full chain (laptop -> EC2 -> Azure VM):
+Test the chain (laptop -> EC2 -> Azure VM):
 
   EC2=\$(aws ec2 describe-instances --region $AWS_REGION \\
-    --filters "Name=tag:Name,Values=demo-net-hybrid-jump" "Name=instance-state-name,Values=running" \\
+    --filters "Name=tag:Name,Values=demo-net2-hybrid-jump" "Name=instance-state-name,Values=running" \\
     --query 'Reservations[0].Instances[0].InstanceId' --output text)
-
-  # Hop 1: laptop -> EC2 jump host
   aws ssm start-session --region $AWS_REGION --target \$EC2
-
-  # Inside the EC2 shell — Hop 2: EC2 -> Azure VM
+  # then inside that shell:
   aws ssm start-session --region $AWS_REGION --target $MI
-  # then:  hostname && cat /etc/os-release && curl -s ifconfig.me
 
 When done:  ./azure-vm.sh cleanup
 EOF
@@ -185,8 +169,17 @@ status() {
 
 cleanup() {
   require az
-  echo "== Deleting Azure resource group $AZ_RG (this also removes the VM, disks, NIC, VNet, NSG) =="
-  az group delete -n "$AZ_RG" --yes --no-wait
+  # Just delete the VM (and its NIC/disk/NSG associations) so the RG/VNet survive
+  # for peering.sh. peering.sh's cleanup tears down VNet/RG.
+  echo "== Deleting Azure VM $AZ_VM (keeps RG/VNet for peering.sh) =="
+  az vm delete -g "$AZ_RG" -n "$AZ_VM" --yes 2>/dev/null || true
+  # Best-effort NIC/disk cleanup
+  for NIC in $(az network nic list -g "$AZ_RG" --query "[?contains(name,'${AZ_VM}')].name" -o tsv 2>/dev/null); do
+    az network nic delete -g "$AZ_RG" -n "$NIC" 2>/dev/null || true
+  done
+  for DISK in $(az disk list -g "$AZ_RG" --query "[?contains(name,'${AZ_VM}')].name" -o tsv 2>/dev/null); do
+    az disk delete -g "$AZ_RG" -n "$DISK" --yes 2>/dev/null || true
+  done
   echo "Submitted. The hybrid 'mi-…' will go offline; remove it with ./hybrid-ssm.sh cleanup."
 }
 

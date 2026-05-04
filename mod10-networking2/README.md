@@ -1,12 +1,25 @@
 # Module 10: Networking 2
 
-**Topic:** VPC peering, Transit Gateway, PrivateLink, hybrid connectivity, Route 53.
-**Focus:** Demonstrate VPC-to-VPC connectivity using a Transit Gateway — the modern hub-and-spoke pattern.
+**Topic:** VPC peering, Transit Gateway, PrivateLink, hybrid connectivity (cross-cloud IPsec VPN), Route 53.
+**Focus:** Multi-VPC connectivity via Transit Gateway, plus a cross-cloud site-to-site VPN to Azure.
 
 ## Quick commands
 ```bash
-./deploy.sh                 # CFN: 2 VPCs + TGW + 2 EC2 (SSM)
-./cleanup.sh                # delete the stack
+# Demo 1 — Transit Gateway hub-and-spoke
+./deploy.sh                                 # CFN: 2 VPCs + TGW + 2 EC2 (SSM)
+./cleanup.sh                                # delete the stack
+
+# Demo 2 — cross-cloud peering (AWS VPC <-> Azure VNet via IPsec VPN)
+#   Self-contained: all required scripts/templates live in mod10.
+./peering.sh deploy                         # bootstraps demo-net2-vpc, builds tunnel (~30-45 min Azure VPN GW)
+./hybrid-ssm.sh deploy                      # SSM activation + EC2 jump host (prints ACT_CODE)
+ACT_CODE=<paste> ./azure-vm.sh deploy       # Azure Linux VM, auto-registers as mi-*
+./peering.sh status                         # tunnel telemetry both sides
+./peering.sh test                           # ping over VPN from EC2 -> Azure VM
+./azure-vm.sh cleanup                       # delete Azure VM
+./hybrid-ssm.sh cleanup                     # terminate EC2, deregister mi-*, reset SSM tier
+./peering.sh cleanup                        # delete VPN/VGW/CGW + Azure VPN GW, reset SSM tier
+aws cloudformation delete-stack --stack-name demo-net2-vpc  # finally drop the VPC
 ```
 
 ---
@@ -204,3 +217,99 @@ aws cloudformation delete-stack --region us-east-1 --stack-name demo-net2-tgw
 ```
 
 > **Cost note:** TGW attachments ≈ $0.05/hr each + data. Tear down promptly.
+
+---
+
+## Demo 2: Site-to-Site VPN — AWS VPC ↔ Azure VNet
+
+### 1. Overview
+- **What it shows:** A production-style **IPsec site-to-site VPN** between an AWS **VPN Gateway** and an Azure **VPN Gateway**, with static routing in both directions. After this is up, EC2s in `demo-net2-vpc` (10.30.0.0/16) and VMs in the Azure VNet (10.40.0.0/16) reach each other over private IPs.
+- **Self-contained:** all four files needed live in mod10 — `peering.sh`, `hybrid-ssm.sh`, `azure-vm.sh`, `vpc-template.yaml`. No references to other modules. Resource names are prefixed `demo-net2-` so they coexist with mod03's `demo-net-` versions if you want to run both.
+- **Why not "peering":** AWS VPC peering and Azure VNet peering are intra-cloud constructs — there is no native cross-cloud peering. The hybrid-network primitive that AWS supports against Azure is **IPsec VPN** (or Direct Connect + ExpressRoute via a colocated partner).
+- **Services:** EC2 VPN Gateway, Customer Gateway, Site-to-Site VPN, Azure VirtualNetworkGateway, Local Network Gateway, Connection, SSM (Session Manager + hybrid activations).
+
+### 2. Architecture
+```
+  AWS demo-net2-vpc 10.30.0.0/16           Azure demo-net2-hybrid-vnet 10.40.0.0/16
+  ------------------------------           ------------------------------------------
+     PrivA / PrivB subnets                     default subnet (10.40.1.0/24)
+     Private RT:                                + GatewaySubnet  10.40.255.0/27
+       0.0.0.0/0  -> NAT GW
+       10.40/16   -> VGW   <===== IPsec tunnel =====>   VirtualNetworkGateway VpnGw1
+     VPN Gateway (vgw-...)                                  |
+     Customer Gateway (Azure VPN public IP)                 |
+     VPN Connection (static, 10.40/16)                Local Network Gateway
+                                                       (AWS tunnel-1 outside IP,
+                                                        local prefixes = 10.30/16)
+```
+
+### 3. Prerequisites
+- `az` CLI logged into the Azure subscription, `aws` CLI configured.
+- Patience: **the Azure VPN Gateway alone takes ≈30–45 minutes to provision.**
+- Note: mod10 Demo 1 (TGW) uses VPC CIDRs 10.40/16 and 10.41/16 in AWS, which collide with the Azure VNet CIDR (10.40/16) used here. Don't run Demos 1+2 concurrently if you intend to extend either with cross-routing.
+
+### 4. Step-by-Step
+```bash
+# 1) Build the IPsec tunnel (auto-deploys VPC stack if missing, ~30-45 min for Azure VPN GW)
+./peering.sh deploy
+
+# 2) For end-to-end ping: stand up an EC2 jump host + Azure VM as ping endpoints.
+#    hybrid-ssm.sh prints ACT_CODE; pass it to azure-vm.sh.
+./hybrid-ssm.sh deploy
+ACT_CODE=<paste-from-step-2> ./azure-vm.sh deploy
+
+# 3) Validate
+./peering.sh status        # AWS VgwTelemetry + Azure connectionStatus
+./peering.sh test          # SSM-runs ping from EC2 jump host to Azure VM private IP
+
+# 4) Tear down (Demo 2)
+./azure-vm.sh cleanup
+./hybrid-ssm.sh cleanup
+./peering.sh cleanup
+aws cloudformation delete-stack --region us-east-1 --stack-name demo-net2-vpc
+```
+
+**SSM hybrid tier:** Session Manager to a hybrid `mi-*` instance requires the
+account+region SSM service setting `activation-tier=advanced` (~$0.00695/hr per
+managed instance). Both `peering.sh deploy` and `hybrid-ssm.sh deploy` flip it to
+`advanced`; both cleanups (and `cleanup.sh`) reset it to `standard`. The toggle is
+idempotent.
+
+### 5. Validation
+```bash
+# AWS side
+aws ec2 describe-vpn-connections --region us-east-1 \
+  --filters "Name=tag:Name,Values=demo-net2-vpn-azure" \
+  --query 'VpnConnections[0].VgwTelemetry[*].[OutsideIpAddress,Status,StatusMessage]' --output table
+# Expect: at least tunnel 1 Status=UP
+
+# Azure side
+az network vpn-connection show -g demo-net2-hybrid-rg -n demo-net2-azure-to-aws \
+  --query '{status:connectionStatus,bytesIn:ingressBytesTransferred,bytesOut:egressBytesTransferred}' -o table
+# Expect: connectionStatus=Connected
+```
+
+End-to-end ping (requires `./hybrid-ssm.sh deploy` + `./azure-vm.sh deploy` for the endpoints):
+```bash
+./peering.sh test
+# If ping fails but Status=UP, the Azure NSG is blocking ICMP. Add:
+#   az network nsg rule create -g demo-net2-hybrid-rg --nsg-name demo-net2-hybrid-nsg \
+#     -n allow-aws-icmp --priority 200 --source-address-prefixes 10.30.0.0/16 \
+#     --protocol Icmp --access Allow --direction Inbound
+```
+
+### 6. Common gotchas
+- **Only one tunnel is wired.** AWS Site-to-Site VPN gives you two tunnels for HA; this demo configures Azure to use tunnel-1 only. Production should configure both with active-active and BGP.
+- **Static routing.** BGP on Azure VPN Gateway needs SKU ≥ VpnGw1 with active-active and an ASN; static is simpler for a teaching demo.
+- **Address space overlap.** AWS VPC and Azure VNet CIDRs must not overlap. This demo uses 10.30/16 and 10.40/16.
+- **PSK rotation.** If you `modify-vpn-tunnel-options` on AWS, also `az network vpn-connection shared-key update` with the new value.
+
+### 7. Cleanup
+```bash
+./azure-vm.sh cleanup       # delete Azure VM (RG/VNet kept for peering teardown)
+./hybrid-ssm.sh cleanup     # terminate EC2, deregister mi-*, reset SSM tier to standard
+./peering.sh cleanup        # deletes VPN/VGW/CGW on AWS and VPN GW + connection on Azure, resets SSM tier
+aws cloudformation delete-stack --region us-east-1 --stack-name demo-net2-vpc
+```
+
+> **Cost note:** Azure `VpnGw1` ≈ **\$0.19/hr**, AWS Site-to-Site VPN ≈ **\$0.05/hr**, plus a few cents/hr of egress for keepalives. Tear down promptly.

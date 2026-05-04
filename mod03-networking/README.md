@@ -346,3 +346,4 @@ sudo systemctl stop amazon-ssm-agent || true
 ```
 
 > **Cost note:** EC2 jump host (~t3.micro) + the existing NAT GW from Demo 1. SSM Session Manager itself is free; hybrid managed instances are $0 for **advanced-tier** features only if you exceed 1,000 instances per account/region — for one Azure VM, the cost is the EC2 + data transfer.
+
