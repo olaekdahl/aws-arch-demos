@@ -35,3 +35,26 @@ aws sts get-caller-identity
 | 12 | Edge Services | `mod12-edge/` |
 | 13 | Backup and Recovery | `mod13-backup-recovery/` |
 | 14 | Course Summary | `mod14-summary/` |
+
+## Troubleshooting
+
+### `AWS::EarlyValidation::ResourceExistenceCheck` failed
+The account-level CloudFormation hook rejects creating a resource that already exists
+outside the stack (typical cause: a previous `cleanup` left an orphan, or a stack with
+hard-coded names was deleted but the underlying resource lingered).
+
+Find the orphan in the failure message, then remove it manually:
+```bash
+aws logs delete-log-group --log-group-name <name>          # log groups
+aws s3 rb s3://<bucket> --force                            # S3 buckets (empties first)
+
+# Backup vaults — must be empty before delete; this loop removes recovery points first:
+VAULT=<name>
+for ARN in $(aws backup list-recovery-points-by-backup-vault \
+              --backup-vault-name "$VAULT" \
+              --query 'RecoveryPoints[].RecoveryPointArn' --output text); do
+  aws backup delete-recovery-point --backup-vault-name "$VAULT" --recovery-point-arn "$ARN"
+done
+aws backup delete-backup-vault --backup-vault-name "$VAULT"
+```
+Then re-run `./deploy.sh`.
