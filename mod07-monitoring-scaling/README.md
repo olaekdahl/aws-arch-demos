@@ -6,6 +6,9 @@
 ## Quick commands
 ```bash
 ./deploy.sh                 # CFN: ALB + ASG + target tracking + alarms
+./deploy.sh stress          # also kick off CPU stress to trigger target-tracking scale-out
+./scale-up.sh               # deterministic scale-out: bump DesiredCapacity by 1
+./scale-up.sh 2             # bump by N (capped at MaxSize)
 ./cleanup.sh                # delete the stack
 ```
 
