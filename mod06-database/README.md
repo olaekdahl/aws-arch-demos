@@ -56,6 +56,7 @@ python3 demo.py cleanup
 """Module 6 Demo 1 — DynamoDB single-table + GSI.
 Production split: schema.py, repository.py, app.py."""
 import sys, time, boto3
+from decimal import Decimal
 from botocore.exceptions import ClientError
 
 REGION = "us-east-1"
@@ -85,18 +86,28 @@ def up():
     except ClientError as e:
         if e.response["Error"]["Code"] != "ResourceInUseException": raise
     ddb.get_waiter("table_exists").wait(TableName=TABLE)
-    ddb.update_continuous_backups(TableName=TABLE,
-        PointInTimeRecoverySpecification={"PointInTimeRecoveryEnabled": True})
+    # Continuous backups are provisioned async after the table becomes ACTIVE,
+    # so UpdateContinuousBackups can race and return ContinuousBackupsUnavailable.
+    for _ in range(30):
+        try:
+            ddb.update_continuous_backups(TableName=TABLE,
+                PointInTimeRecoverySpecification={"PointInTimeRecoveryEnabled": True})
+            break
+        except ClientError as e:
+            if e.response["Error"]["Code"] != "ContinuousBackupsUnavailableException": raise
+            time.sleep(2)
+    else:
+        raise RuntimeError("PITR did not become available within 60s")
     print(f"Table {TABLE} ready (PITR on).")
 
 def seed():
     t = res.Table(TABLE)
     items = [
-        {"PK":"CUSTOMER#alice","SK":"ORDER#1001","status":"NEW","total":99.50,
+        {"PK":"CUSTOMER#alice","SK":"ORDER#1001","status":"NEW","total":Decimal("99.50"),
          "GSI1PK":"STATUS#NEW","GSI1SK":"2026-05-01T10:00"},
-        {"PK":"CUSTOMER#alice","SK":"ORDER#1002","status":"SHIPPED","total":42.00,
+        {"PK":"CUSTOMER#alice","SK":"ORDER#1002","status":"SHIPPED","total":Decimal("42.00"),
          "GSI1PK":"STATUS#SHIPPED","GSI1SK":"2026-05-02T11:00"},
-        {"PK":"CUSTOMER#bob","SK":"ORDER#1003","status":"NEW","total":120.00,
+        {"PK":"CUSTOMER#bob","SK":"ORDER#1003","status":"NEW","total":Decimal("120.00"),
          "GSI1PK":"STATUS#NEW","GSI1SK":"2026-05-02T12:00"},
     ]
     with t.batch_writer() as bw:
