@@ -13,6 +13,10 @@ python3 demo.py cleanup
 
 # Demo 2 — interactive storage recommender
 bash recommend.sh
+
+# Demo 3 — S3 -> Lambda -> DynamoDB ingest pipeline (provisions in us-east-1)
+./pipeline-deploy.sh
+./pipeline-teardown.sh
 ```
 
 ---
@@ -168,3 +172,73 @@ esac
 
 ### 7. Cleanup
 - None (no AWS resources created).
+
+---
+
+## Demo 3: S3 → Lambda → DynamoDB Ingest Pipeline (CloudFormation)
+
+### 1. Overview
+- **What it shows:** A complete event-driven ingest pipeline. A file dropped into the `incoming/` prefix of an S3 bucket triggers a Lambda function that parses the file (CSV with header, or JSON array/object) and writes each row as an item to a DynamoDB table.
+- **Use case:** The canonical "land file → process → store" pattern for log ingest, batch loads, partner data drops, etc.
+- **Services:** S3, Lambda (Python 3.12), DynamoDB (PAY_PER_REQUEST), IAM, CloudFormation.
+- **Region:** All resources are provisioned in `us-east-1`.
+
+### 2. Architecture
+```
+[ aws s3 cp file.csv s3://...incoming/ ]
+              |
+              v
+   [ S3 Bucket: demo-pipeline-uploads-<acct>-us-east-1 ]
+        - SSE: AES256, Block Public Access: ALL ON
+        - NotificationConfiguration: prefix=incoming/, ObjectCreated -> Lambda
+              |
+              v
+   [ Lambda: demo-pipeline-processor ]
+        - Reads object, parses CSV/JSON, batch-writes to DynamoDB
+              |
+              v
+   [ DynamoDB: demo-pipeline-records ]
+        - pk = S3 key, sk = "<row-index>-<uuid8>", plus row fields
+```
+
+### 3. Files
+- `pipeline-template.yaml` — bucket, table, Lambda (inline Python), IAM role, invoke permission.
+- `pipeline-deploy.sh` — `cloudformation deploy`, attaches the S3 notification (out-of-band to avoid the well-known CFN circular dep), uploads a sample CSV, polls DynamoDB to confirm.
+- `pipeline-teardown.sh` — empties the bucket (objects + versions + delete markers), deletes the stack, removes the Lambda log group.
+
+### 4. Prerequisites
+- AWS CLI configured with credentials that can manage S3, Lambda, DynamoDB, IAM, and CloudFormation.
+- `python3` (only used locally if you want to lint).
+
+### 5. Step-by-Step
+```bash
+./pipeline-deploy.sh
+```
+
+Upload the bundled `sample.csv` (10 rows: id,name,amount) to trigger the pipeline:
+```bash
+ACCT=$(aws sts get-caller-identity --query Account --output text)
+BUCKET="demo-pipeline-uploads-${ACCT}-us-east-1"
+
+aws s3 cp sample.csv s3://$BUCKET/incoming/sample.csv
+
+# tail the Lambda logs while it processes:
+aws logs tail /aws/lambda/demo-pipeline-processor --region us-east-1 --follow
+
+# query the items the Lambda wrote (one S3 key = one pk):
+aws dynamodb query --region us-east-1 --table-name demo-pipeline-records \
+  --key-condition-expression "pk = :k" \
+  --expression-attribute-values '{":k":{"S":"incoming/sample.csv"}}' \
+  --output table
+```
+
+Expected: 10 items, each with `pk=incoming/sample.csv`, a unique `sk`, and the `id`/`name`/`amount` fields from the CSV row. JSON works the same way — drop a `.json` file (object or array of objects) under `incoming/` and each object becomes one item.
+
+### 6. Validation
+- `pipeline-deploy.sh` ends by querying DynamoDB for the sample CSV's key and printing the items it wrote — you should see three rows (alice/bob/carol).
+- Lambda logs show `Wrote 3 items from s3://...`.
+
+### 7. Cleanup
+```bash
+./pipeline-teardown.sh
+```

@@ -1,0 +1,111 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Module 5 — S3 -> Lambda -> DynamoDB ingest pipeline.
+
+# Note on S3 -> Lambda wiring:
+# Defining the bucket's NotificationConfiguration in CloudFormation creates a
+# circular dependency with the Lambda::Permission that grants S3 invoke rights.
+# The deploy script attaches the notification via the CLI after the stack is up.
+
+Resources:
+  UploadsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub demo-pipeline-uploads-${AWS::AccountId}-${AWS::Region}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+
+  RecordsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: demo-pipeline-records
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+
+  ProcessorRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: { Service: lambda.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: pipeline-access
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action: [s3:GetObject]
+                Resource: !Sub arn:aws:s3:::${UploadsBucket}/*
+              - Effect: Allow
+                Action: [dynamodb:PutItem, dynamodb:BatchWriteItem]
+                Resource: !GetAtt RecordsTable.Arn
+
+  ProcessorFn:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: demo-pipeline-processor
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt ProcessorRole.Arn
+      Timeout: 60
+      MemorySize: 256
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref RecordsTable
+      Code:
+        ZipFile: |
+          import csv, io, json, os, urllib.parse, uuid
+          import boto3
+          s3  = boto3.client("s3")
+          ddb = boto3.resource("dynamodb")
+          tbl = ddb.Table(os.environ["TABLE_NAME"])
+
+          def _rows(key, body):
+              if key.lower().endswith(".json"):
+                  data = json.loads(body)
+                  return data if isinstance(data, list) else [data]
+              # default: CSV with header row
+              return list(csv.DictReader(io.StringIO(body)))
+
+          def handler(event, _ctx):
+              written = 0
+              for rec in event["Records"]:
+                  bucket = rec["s3"]["bucket"]["name"]
+                  key = urllib.parse.unquote_plus(rec["s3"]["object"]["key"])
+                  body = s3.get_object(Bucket=bucket, Key=key)["Body"].read().decode("utf-8")
+                  rows = _rows(key, body)
+                  with tbl.batch_writer() as bw:
+                      for i, row in enumerate(rows):
+                          item = {"pk": key, "sk": f"{i:06d}-{uuid.uuid4().hex[:8]}", **{k: str(v) for k, v in row.items()}}
+                          bw.put_item(Item=item)
+                          written += 1
+                  print(f"Wrote {len(rows)} items from s3://{bucket}/{key}")
+              return {"written": written}
+
+  InvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt ProcessorFn.Arn
+      Action: lambda:InvokeFunction
+      Principal: s3.amazonaws.com
+      SourceAccount: !Ref AWS::AccountId
+      SourceArn: !Sub arn:aws:s3:::demo-pipeline-uploads-${AWS::AccountId}-${AWS::Region}
+
+Outputs:
+  BucketName:    { Value: !Ref UploadsBucket }
+  TableName:     { Value: !Ref RecordsTable }
+  FunctionName:  { Value: !Ref ProcessorFn }
+  FunctionArn:   { Value: !GetAtt ProcessorFn.Arn }
