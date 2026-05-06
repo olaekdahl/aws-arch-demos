@@ -67,7 +67,13 @@ Resources:
       Port: 80
       Protocol: HTTP
       TargetType: ip
-      HealthCheckPath: /
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 15
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher: { HttpCode: '200' }
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: '10' }
   Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -82,7 +88,7 @@ Resources:
     Properties:
       Cluster: !Ref Cluster
       LaunchType: FARGATE
-      DesiredCount: 2
+      DesiredCount: 3
       TaskDefinition: !Ref TaskDef
       NetworkConfiguration:
         AwsvpcConfiguration:

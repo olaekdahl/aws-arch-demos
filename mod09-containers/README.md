@@ -14,8 +14,8 @@
 ## Demo 1: ECS Fargate + ECR + ALB (CloudFormation, single template)
 
 ### 1. Overview
-- **What it shows:** Push a tiny container to ECR, run it on Fargate behind an ALB, scale on CPU. Single CFN template captures the whole stack.
-- **Use case:** Modern minimal containerized service.
+- **What it shows:** Push a Flask app to ECR, run 3 tasks on Fargate behind an ALB. The page reads the ECS task metadata endpoint and renders the task ID + AZ + a color hashed from the task ID. The page auto-refreshes every 2 s, so the ALB round-robin between tasks is visually obvious.
+- **Use case:** Modern minimal containerized service with a UI that proves multi-task load balancing.
 - **Services:** ECR, ECS Fargate, ALB, IAM, CloudWatch Logs.
 
 ### 2. Architecture
@@ -25,8 +25,11 @@
                           v
         +-----------------------------------+
         | ECS Cluster: demo-ctr-cluster     |
-        |   Service (Fargate, desired=2)    |
-        |     Task: app:latest, port 80     |
+        |   Service (Fargate, desired=3)    |
+        |     Task: flask app, port 80      |
+        |     /         -> HTML w/ task ID  |
+        |     /api/info -> JSON metadata    |
+        |     /health   -> ALB health check |
         +-----------------+-----------------+
                           |
                        [ ALB ]
@@ -49,11 +52,9 @@ REPO=demo-ctr-app
 aws ecr create-repository --region $REGION --repository-name $REPO || true
 aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ACCT.dkr.ecr.$REGION.amazonaws.com
 
-cat > Dockerfile <<'EOF'
-FROM public.ecr.aws/nginx/nginx:alpine
-RUN echo "<h1>Hello from ECS Fargate</h1>" > /usr/share/nginx/html/index.html
-EOF
-
+# Dockerfile + app.py are checked in alongside this README — the app is a
+# small Flask server that reads the ECS task metadata endpoint and renders
+# the task ID, AZ, and a per-task color into the HTML.
 docker build -t $REPO .
 docker tag $REPO:latest $ACCT.dkr.ecr.$REGION.amazonaws.com/$REPO:latest
 docker push $ACCT.dkr.ecr.$REGION.amazonaws.com/$REPO:latest
@@ -142,7 +143,13 @@ Resources:
       Port: 80
       Protocol: HTTP
       TargetType: ip
-      HealthCheckPath: /
+      HealthCheckPath: /health
+      HealthCheckIntervalSeconds: 15
+      HealthyThresholdCount: 2
+      UnhealthyThresholdCount: 2
+      Matcher: { HttpCode: '200' }
+      TargetGroupAttributes:
+        - { Key: deregistration_delay.timeout_seconds, Value: '10' }
   Listener:
     Type: AWS::ElasticLoadBalancingV2::Listener
     Properties:
@@ -157,7 +164,7 @@ Resources:
     Properties:
       Cluster: !Ref Cluster
       LaunchType: FARGATE
-      DesiredCount: 2
+      DesiredCount: 3
       TaskDefinition: !Ref TaskDef
       NetworkConfiguration:
         AwsvpcConfiguration:
@@ -175,8 +182,13 @@ Outputs:
 ```bash
 URL=$(aws cloudformation describe-stacks --region us-east-1 --stack-name demo-ctr-fargate \
   --query "Stacks[0].Outputs[0].OutputValue" --output text)
-curl $URL
-# -> <h1>Hello from ECS Fargate</h1>
+
+# Open in a browser — the page auto-refreshes every 2 s and the task ID +
+# background color rotate as the ALB round-robins between the 3 tasks.
+echo "$URL"
+
+# Or hit the JSON endpoint a few times to see the rotation on the CLI:
+for i in $(seq 1 6); do curl -s $URL/api/info | jq '.task_id, .availability_zone'; done
 ```
 
 ### 7. Cleanup
